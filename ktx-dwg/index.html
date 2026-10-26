@@ -69,6 +69,9 @@ input.t,textarea.t,select.t{width:100%;padding:10px 12px;border:1px solid var(--
 .vbar{display:flex;align-items:center;gap:6px;padding:8px 10px;background:var(--card);border-bottom:1px solid var(--line);flex-wrap:wrap}
 .vbar .title{flex:1;min-width:120px;font-weight:700;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .vbar input{width:64px;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--bg);text-align:center}
+.vfind{display:flex;gap:6px;padding:6px 10px;background:var(--card);border-bottom:1px solid var(--line)}
+.vfind input{flex:1;min-width:0;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg)}
+#hl div.ocrbox{pointer-events:auto;cursor:pointer}
 #stage{flex:1;overflow:auto;position:relative;touch-action:pan-x pan-y}
 #pagewrap{position:relative;margin:10px auto;box-shadow:0 2px 12px rgba(0,0,0,.4);background:#fff;transform-origin:0 0}
 #pagewrap canvas{display:block}
@@ -125,6 +128,11 @@ input.t,textarea.t,select.t{width:100%;padding:10px 12px;border:1px solid var(--
     <button class="btn sm" id="vFit">맞춤</button>
     <button class="btn sm" id="vZoomIn">＋</button>
   </div>
+  <form class="vfind" id="vFind" autocomplete="off">
+    <input id="vQ" type="search" placeholder="이 도면에서 찾기 (선번호, 계전기…)" enterkeyhint="search">
+    <button class="btn sm primary" type="submit">찾기</button>
+    <button class="btn sm" type="button" id="vNextHit" hidden>다음 위치</button>
+  </form>
   <div id="stage"><div id="pagewrap"><canvas id="cv"></canvas><div id="hl"></div></div></div>
   <div class="vfoot" id="vFoot"></div>
 </div>
@@ -197,7 +205,7 @@ let FILES = [], PAGES = [], TAGS = [];
 async function loadAll(){
   [FILES, PAGES, TAGS] = await Promise.all([getAll("files"), getAll("pages"), getAll("tags")]);
   FILES.sort((a, b) => a.name.localeCompare(b.name, "ko", {numeric: true}));
-  for (const p of PAGES){ p.norm = norm(p.text); p.onorm = p.ocr ? norm(p.ocr.text) : ""; }
+  for (const p of PAGES){ p.norm = norm(p.text); p.onorm = p.ocr ? norm(p.ocr.text) : ""; p.oskel = skel(p.onorm); }
 }
 const fileById = id => FILES.find(f => f.id === id);
 const tagsOf = (fileId, page) => TAGS.filter(t => t.fileId === fileId && t.page === page);
@@ -205,6 +213,9 @@ const tagsOf = (fileId, page) => TAGS.filter(t => t.fileId === fileId && t.page 
 /* ---------- text helpers ---------- */
 const norm = s => (s || "").toLowerCase().normalize("NFC").replace(/[\s\-_·.,/()\[\]]+/g, "");
 const esc = s => (s || "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+/* 인식기가 자주 헷갈리는 글자(B/8, O/0, I/1, S/5, Z/2, G/6)를 같게 본 형태. 숫자가 든 검색어에만 쓴다 */
+const skel = s => s.replace(/o/g, "0").replace(/[il|]/g, "1").replace(/b/g, "8").replace(/s/g, "5").replace(/z/g, "2").replace(/g/g, "6");
+const ocrHas = (onorm, oskel, tk) => !!onorm && (onorm.includes(tk) || (/\d/.test(tk) && oskel.includes(skel(tk))));
 function tokens(q){ return q.split(/\s+/).map(norm).filter(Boolean); }
 
 function snippet(text, toks){
@@ -257,13 +268,13 @@ function search(q){
     const tt = tagText.get(k) || "", fn = norm(f.name + " " + (f.memo || ""));
     let ok = true, score = 0;
     for (const tk of toks){
-      const inTag = tt.includes(tk), inBody = p.norm.includes(tk) || (p.onorm && p.onorm.includes(tk)), inName = fn.includes(tk);
+      const inTag = tt.includes(tk), inBody = p.norm.includes(tk) || ocrHas(p.onorm, p.oskel, tk), inName = fn.includes(tk);
       if (!inTag && !inBody && !inName){ ok = false; break; }
       score += (inTag ? 10 : 0) + (inBody ? 3 + Math.min(5, p.norm.split(tk).length - 1) : 0) + (inName ? 1 : 0);
     }
     if (!ok) continue;
     // 파일명만 일치하는 경우 모든 페이지가 뜨지 않게, 첫 페이지로만
-    const onlyName = toks.every(tk => !tt.includes(tk) && !p.norm.includes(tk) && !(p.onorm && p.onorm.includes(tk)));
+    const onlyName = toks.every(tk => !tt.includes(tk) && !p.norm.includes(tk) && !ocrHas(p.onorm, p.oskel, tk));
     if (onlyName && p.page !== 1) continue;
     add(p.fileId, p.page, score, tt && toks.some(tk => tt.includes(tk)) ? "tag" : onlyName ? "name" : "body");
   }
@@ -327,7 +338,7 @@ function renderSearch(){
       html += `<div class="card result" data-f="${r.fileId}" data-p="${r.page}">
         <div class="t"><span class="fname">${esc(f.name)}</span><span class="pg">${r.page}쪽</span>${r.src.has("tag") ? '<span class="chip">태그 일치</span>' : ""}</div>
         ${tg.length ? `<div class="chips">${tg.map(t => `<span class="chip">${esc(t.label)}</span>`).join("")}</div>` : ""}
-        ${p && p.text && toks.some(tk => p.norm.includes(tk)) ? `<div class="snip">${snippet(p.text, toks)}</div>` : p && p.ocr && toks.some(tk => p.onorm.includes(tk)) ? `<div class="snip"><span class="chip">글자 인식</span> ${snippet(p.ocr.text, toks)}</div>` : p && p.text ? `<div class="snip">${snippet(p.text, toks)}</div>` : ""}
+        ${p && p.text && toks.some(tk => p.norm.includes(tk)) ? `<div class="snip">${snippet(p.text, toks)}</div>` : p && p.ocr && toks.some(tk => ocrHas(p.onorm, p.oskel, tk)) ? `<div class="snip"><span class="chip">글자 인식</span> ${snippet(p.ocr.text, toks)}</div>` : p && p.text ? `<div class="snip">${snippet(p.text, toks)}</div>` : ""}
       </div>`;
     }
     if (rs.length > 200) html += `<div class="muted">상위 200건만 표시합니다. 검색어를 더 구체적으로 입력해 보세요.</div>`;
@@ -557,6 +568,8 @@ async function openViewer(fileId, page, query){
   history.pushState({viewer: 1}, "");
   $("#vTitle").textContent = f.name; $("#vTotal").textContent = "/ " + f.pages;
   V.fileId = fileId; V.page = page; V.query = query || ""; V.zoom = V.query ? 2.5 : 1;  // 검색해서 열면 일치 위치를 확대해서 보여줌
+  $("#vQ").value = V.query; V.hitIdx = 0;
+  V.findPages = V.query ? search(V.query).filter(r => r.fileId === fileId).map(r => r.page).sort((a, b) => a - b) : [];
   if (docCache.id !== fileId){
     if (docCache.doc) docCache.doc.destroy();
     docCache = {id: null, doc: null};
@@ -580,6 +593,32 @@ $("#vPage").onchange = e => goPage(parseInt(e.target.value, 10) || V.page);
 $("#vZoomIn").onclick = () => setZoom(V.zoom * 1.4);
 $("#vZoomOut").onclick = () => setZoom(V.zoom / 1.4);
 $("#vFit").onclick = () => setZoom(1);
+/* 보기 화면 안에서 찾기: 이 쪽에 있으면 그 위치로, 없으면 이 도면에서 처음 나오는 쪽으로 이동 */
+$("#vFind").onsubmit = e => {
+  e.preventDefault();
+  const q = $("#vQ").value.trim(); $("#vQ").blur();
+  V.query = q; V.hitIdx = 0;
+  if (!q){ V.findPages = []; renderPage(); return; }
+  pushRecent(q);
+  const pages = search(q).filter(r => r.fileId === V.fileId).map(r => r.page).sort((a, b) => a - b);
+  V.findPages = pages;
+  if (!pages.length){ toast("이 도면에서 찾지 못했습니다"); renderPage(); return; }
+  V.zoom = Math.max(V.zoom, 2.5);
+  if (!pages.includes(V.page)) V.page = pages.find(p => p > V.page) || pages[0];
+  renderPage();
+};
+$("#vNextHit").onclick = () => {
+  const hits = document.querySelectorAll("#hl .hit");
+  if (hits.length > 1 && (V.hitIdx || 0) < hits.length - 1){ V.hitIdx = (V.hitIdx || 0) + 1; scrollToHit(hits[V.hitIdx]); return; }
+  const pages = V.findPages || [], next = pages.find(p => p > V.page) || pages[0];
+  if (next && next !== V.page){ V.hitIdx = 0; goPage(next); }
+  else if (hits.length){ V.hitIdx = 0; scrollToHit(hits[0]); }
+};
+function scrollToHit(el){
+  const st = $("#stage");
+  st.scrollTo({left: el.offsetLeft + el.offsetWidth / 2 - st.clientWidth / 2, top: el.offsetTop + el.offsetHeight / 2 - st.clientHeight / 2});
+}
+$("#hl").addEventListener("click", e => { const d = e.target.closest(".ocrbox"); if (d) toast("인식된 글자: " + d.dataset.t, 2500); });
 function goPage(p){ if (!V.doc) return; p = Math.max(1, Math.min(V.doc.numPages, p)); if (p !== V.page){ V.page = p; renderPage(); } else $("#vPage").value = p; }
 function setZoom(z){
   const st = $("#stage"), cx = (st.scrollLeft + st.clientWidth / 2) / st.scrollWidth, cy = (st.scrollTop + st.clientHeight / 2) / st.scrollHeight;
@@ -645,7 +684,8 @@ async function highlight(page, vp){
   if (pg && pg.ocr && (toks.length || V.showOcr)){
     for (const w of pg.ocr.words){
       const n = norm(w.t);
-      const hit = toks.length && toks.some(tk => n.includes(tk) || (n.length >= 2 && tk.includes(n)));
+      const sk = skel(n);
+      const hit = toks.length && toks.some(tk => n.includes(tk) || (n.length >= 2 && tk.includes(n)) || (/\d/.test(tk) && (sk.includes(skel(tk)) || (sk.length >= 3 && skel(tk).includes(sk)))));
       if (!hit && !V.showOcr) continue;
       const div = document.createElement("div");
       div.style.left = w.x * vp.width - 2 + "px"; div.style.top = w.y * vp.height - 2 + "px";
@@ -675,10 +715,7 @@ async function highlight(page, vp){
     div.className = "hit"; hl.appendChild(div);
     if (!first) first = div;
   }
-  if (first && V.zoom > 1.01){
-    const st = $("#stage");
-    st.scrollLeft = first.offsetLeft - st.clientWidth / 2; st.scrollTop = first.offsetTop - st.clientHeight / 2;
-  }
+  if (first && V.zoom > 1.01) scrollToHit(first);
   return first;
 }
 
@@ -692,8 +729,12 @@ function renderFoot(){
     <div class="row" style="margin-top:6px">
       <button class="btn sm" id="ocrPage">${pg && pg.ocr ? "이 쪽 다시 인식" : "이 쪽 글자 인식"}</button>
       ${pg && pg.ocr ? `<label class="muted row" style="gap:4px"><input type="checkbox" id="showOcr" ${V.showOcr ? "checked" : ""}> 인식된 글자 ${pg.ocr.words.length}개 표시</label>` : ""}
+      ${pg && pg.ocr && V.showOcr ? '<span class="muted">파란 박스를 누르면 읽은 글자가 보여요</span>' : ""}
     </div>
-    ${V.query ? `<div class="muted" style="margin-top:6px">“${esc(V.query)}” 표시 ${hits}곳${hits && V.zoom <= 1.01 ? " · 확대하면 해당 위치로 이동" : ""}</div>` : ""}`;
+    ${V.query ? `<div class="muted" style="margin-top:6px">“${esc(V.query)}” 이 쪽에 ${hits}곳${hits && V.zoom <= 1.01 ? " · 확대하면 해당 위치로 이동" : ""}</div>
+      ${(V.findPages || []).length > 1 ? `<div class="chips"><span class="muted">이 도면에서 나오는 쪽</span> ${V.findPages.map(p => `<span class="chip x" data-gp="${p}">${p === V.page ? "▶ " : ""}${p}쪽</span>`).join("")}</div>` : ""}` : ""}`;
+  $("#vNextHit").hidden = !V.query || (hits <= 1 && (V.findPages || []).length <= 1);
+  $("#vFoot").querySelectorAll("[data-gp]").forEach(c => c.onclick = () => { V.hitIdx = 0; goPage(+c.dataset.gp); });
   $("#addTag").onclick = () => tagEditor(null);
   $("#ocrPage").onclick = () => ocrDialog(V.fileId, String(V.page));
   if ($("#showOcr")) $("#showOcr").onchange = e => { V.showOcr = e.target.checked; renderPage(); };
@@ -746,11 +787,11 @@ let rTimer; window.addEventListener("resize", () => { clearTimeout(rTimer); rTim
 const ocrCount = fileId => PAGES.filter(p => p.fileId === fileId && p.ocr).length;
 const OCR_MODES = {
   wire: {label: "선번호·계전기 번호만 (영문 대문자·숫자)", langs: "eng",
-    whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-/._()+:#"},
+    whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-/._()+:#,"},
   all: {label: "한글 포함 전체 글자", langs: "kor+eng", whitelist: ""}
 };
 // 스캔 해상도 그대로 한 번 읽고, 정밀 모드는 1.7배 확대해서 한 번 더 읽어 작은 글자를 보완한다
-const OCR_QUALITY = {fast: {label: "빠르게 (스캔 해상도 그대로)", scales: [1]}, fine: {label: "정밀하게 (작은 선번호까지, 약 3배 느림)", scales: [1, 1.7]}};
+const OCR_QUALITY = {fast: {label: "빠르게 (한 번만 읽음)", scales: [1]}, fine: {label: "정밀하게 (글자 크기에 맞춰 한 번 더 읽음, 약 2배 느림)", scales: [1, 1.7]}};
 let OCR = null;  // 진행 중인 작업
 
 function parsePages(str, max){
@@ -787,6 +828,7 @@ function ocrDialog(fileId, presetPages){
     ${Object.entries(OCR_MODES).map(([k, m]) => `<label class="opt"><input type="radio" name="oMode" value="${k}" ${k === mode ? "checked" : ""}><span>${m.label}${k === "wire" ? '<br><span class="muted">헷갈리는 글자(O/0, l/1)가 줄어 선번호가 더 정확해요</span>' : ""}</span></label>`).join("")}
     <label class="f">해상도</label>
     ${Object.entries(OCR_QUALITY).map(([k, m]) => `<label class="opt"><input type="radio" name="oQ" value="${k}" ${k === q ? "checked" : ""}><span>${m.label}</span></label>`).join("")}
+    ${ocrCount(fileId) ? `<label class="opt"><input type="checkbox" id="oMerge" checked><span>이전 인식 결과에 더하기<br><span class="muted">끄면 이전 결과를 지우고 새로 읽어요. 설정을 바꿔 여러 번 돌리면 더 많이 찾을 수 있어요</span></span></label>` : ""}
     <label class="opt"><input type="checkbox" id="oRot" ${rot === "1" ? "checked" : ""}><span>세로로 쓰인 선번호도 읽기<br><span class="muted">시간이 약 2배 걸려요</span></span></label>
     <div class="muted" style="margin-top:6px">한 쪽에 1~3분 정도 걸려요. 인식이 끝난 쪽은 바로 저장되니 중간에 멈춰도 됩니다. 인식하는 동안 화면을 켜 두세요.</div>
     <div class="row" style="margin-top:16px"><span class="grow"></span>
@@ -797,7 +839,7 @@ function ocrDialog(fileId, presetPages){
     let pages;
     try { pages = parsePages($("#oPages").value, f.pages); } catch (err){ toast(err.message); return; }
     const opts = {mode: document.querySelector('input[name="oMode"]:checked').value,
-      q: document.querySelector('input[name="oQ"]:checked').value, rot: $("#oRot").checked};
+      q: document.querySelector('input[name="oQ"]:checked').value, rot: $("#oRot").checked, merge: !!($("#oMerge") && $("#oMerge").checked)};
     setPref("mode", opts.mode); setPref("q", opts.q); setPref("rot", opts.rot ? "1" : "0");
     history.back();
     runOcr(fileId, pages, opts);
@@ -864,7 +906,8 @@ async function runOcr(fileId, pages, opts){
       await tx(["pages"], "readwrite", async t => {
         const st = t.objectStore("pages");
         const rec = await req(st.get([fileId, pn]));
-        rec.ocr = {words: res, text: res.map(w => w.t).join(" "), at: Date.now(), mode: opts.mode, q: opts.q};
+        const words = opts.merge && rec.ocr ? mergeWords(rec.ocr.words, res) : res;
+        rec.ocr = {words, text: words.map(w => w.t).join(" "), at: Date.now(), mode: opts.mode, q: opts.q, runs: (opts.merge && rec.ocr ? rec.ocr.runs || 1 : 0) + 1};
         st.put(rec);
       });
       done++; words += res.length;
@@ -886,37 +929,44 @@ async function runOcr(fileId, pages, opts){
 }
 
 /* 한 쪽을 조각내어 읽고, 좌표를 쪽 크기 기준(0~1)으로 돌려준다 */
+// 글자 높이가 30px 안팎일 때 가장 잘 읽혀서, 첫 번째로 읽은 글자 크기를 보고 정밀 모드의 두 번째 배율을 정한다
+const OCR_TARGET_PX = 30, OCR_MAX_SIDE = 12000;
 async function ocrPage(doc, pn, worker, opts, progress){
   const page = await doc.getPage(pn);
   const base = page.getViewport({scale: 1});
-  const nat = await nativeScale(page, base);
-  const scales = OCR_QUALITY[opts.q].scales;
+  const longSide = Math.max(base.width, base.height), maxScale = OCR_MAX_SIDE / longSide;
+  const src = await pageSource(page, base);
+  const passes = opts.rot ? 2 : 1;
   const found = [];
-  let k = 0;
-  const jobs = [];
-  for (const m of scales){
-    // 너무 큰 이미지는 기기 메모리와 시간 때문에 제한
-    const scale = Math.min(nat * m, 11000 / Math.max(base.width, base.height));
-    if (jobs.length && scale <= jobs[jobs.length - 1].scale * 1.15) continue;
-    jobs.push({scale, tiles: tilesFor(page.getViewport({scale}))});
-  }
-  const passes = opts.rot ? 2 : 1, total = jobs.reduce((n, j) => n + j.tiles.length * passes, 0);
-  for (const job of jobs){
-    const r = await ocrTiles(page, job, worker, opts, () => progress(++k, total), passes, found);
-    if (!r) return null;
+  const job1 = {scale: Math.min(src.scale, maxScale), vector: src.vector};
+  job1.tiles = tilesFor(page.getViewport({scale: job1.scale}));
+  // 정밀 모드는 두 번째 배율을 아직 모르므로 첫 번째와 같은 양으로 어림잡아 진행률을 보여준다
+  let total = job1.tiles.length * passes * (opts.q === "fine" ? 2 : 1), k = 0;
+  const tick = () => progress(Math.min(++k, total), total);
+  if (!await ocrTiles(page, job1, worker, opts, tick, passes, found)) return null;
+  if (opts.q === "fine"){
+    const hs = found.filter(w => w.c >= 70 && !w.v).map(w => w.h * job1.scale).sort((a, b) => a - b);
+    const med = hs.length >= 5 ? hs[hs.length >> 1] : 0;
+    let scale2 = job1.scale * 1.6, alt = false;
+    if (med) scale2 = job1.scale * OCR_TARGET_PX / med;
+    if (Math.abs(scale2 / job1.scale - 1) < 0.3){ scale2 = job1.scale; alt = true; }  // 크기가 이미 알맞으면 같은 배율에서 처리만 바꿔 한 번 더
+    scale2 = Math.max(job1.scale * 0.5, Math.min(scale2, maxScale));
+    const job2 = {scale: scale2, vector: src.vector, alt};
+    job2.tiles = tilesFor(page.getViewport({scale: scale2}));
+    total = k + job2.tiles.length * passes;
+    if (!await ocrTiles(page, job2, worker, opts, tick, passes, found)) return null;
   }
   page.cleanup();
-  const W = base.width, H = base.height;
-  // 조각 겹침과 여러 배율로 두 번 읽힌 글자는 확신도가 높은 쪽만 남긴다
-  found.sort((a, b) => b.c - a.c);
-  const keep = [];
-  for (const w of found){
-    if (!keep.some(o => overlap(o, w) > 0.5)) keep.push(w);
-  }
-  return keep.map(w => ({t: w.t, c: Math.round(w.c), x: w.x / W, y: w.y / H, w: w.w / W, h: w.h / H, ...(w.v ? {v: 1} : {})}));
+  return mergeWords([], found.map(w => ({t: w.t, c: Math.round(w.c), x: w.x / base.width, y: w.y / base.height, w: w.w / base.width, h: w.h / base.height, ...(w.v ? {v: 1} : {})})));
 }
-/* 스캔 이미지의 원래 해상도에 맞는 배율 (이미지가 없으면 약 300dpi) */
-async function nativeScale(page, base){
+/* 조각 겹침, 여러 배율, 여러 번 인식으로 같은 자리를 두 번 읽으면 확신도가 높은 쪽만 남긴다 */
+function mergeWords(old, add){
+  const all = old.concat(add).sort((a, b) => b.c - a.c), keep = [];
+  for (const w of all) if (!keep.some(o => overlap(o, w) > 0.5)) keep.push(w);
+  return keep;
+}
+/* 스캔 이미지면 원래 해상도, CAD에서 나온 선 도면(글자가 선으로 된 것)이면 긴 변 6000px */
+async function pageSource(page, base){
   try {
     const {OPS} = await getPdfjs();
     const ops = await page.getOperatorList();
@@ -925,11 +975,12 @@ async function nativeScale(page, base){
       if (ops.fnArray[i] !== OPS.paintImageXObject) continue;
       const id = ops.argsArray[i][0];
       const img = await new Promise(res => { try { page.objs.get(id, res); } catch { res(null); } setTimeout(() => res(null), 3000); });
-      if (img && img.width) best = Math.max(best, img.width / base.width, img.height / base.height);
+      // 로고 같은 작은 그림은 무시: 쪽 전체를 덮을 만큼 큰 그림만 스캔으로 본다
+      if (img && img.width * img.height > 1.5e6) best = Math.max(best, img.width / base.width, img.height / base.height);
     }
-    if (best) return Math.max(2, Math.min(best, 8));
+    if (best >= 1.5) return {scale: Math.max(2, Math.min(best, 8)), vector: false};
   } catch (err){ console.warn(err); }
-  return 300 / 72;
+  return {scale: 6000 / Math.max(base.width, base.height), vector: true};
 }
 function tilesFor(vp){
   const W = Math.ceil(vp.width), H = Math.ceil(vp.height);
@@ -951,7 +1002,7 @@ async function ocrTiles(page, job, worker, opts, tick, passes, found){
     ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, t.w, t.h);
     await page.render({canvasContext: ctx, viewport: page.getViewport({scale, offsetX: -t.x, offsetY: -t.y})}).promise;
     if (isBlank(ctx, t.w, t.h)){ for (let i = 0; i < passes; i++) tick(); continue; }
-    enhance(ctx, t.w, t.h);
+    enhance(ctx, t.w, t.h, job);
     tick();
     for (const w of await readWords(worker, cv)) add({t: w.t, c: w.c, x: t.x + w.x0, y: t.y + w.y0, w: w.x1 - w.x0, h: w.y1 - w.y0});
     if (opts.rot){
@@ -976,30 +1027,55 @@ function isBlank(ctx, w, h){
   for (let i = 0; i < d.length; i += 4 * 97) if (d[i] + d[i + 1] + d[i + 2] < 384) dark++;
   return dark < 3;
 }
-/* 회색조 → 3x3 중간값 필터(스캔 잡티 제거) → 대비 높이기 */
-function enhance(ctx, w, h){
+/* 회색조 → (스캔) 3x3 중간값 필터로 잡티 제거, (선 도면) 가는 선을 굵게 → 대비 높이기
+   선 도면은 글자가 1px 실선으로 그려져서 그대로는 잘 안 읽힌다. 중간값 필터를 쓰면 아예 지워진다 */
+function enhance(ctx, w, h, job){
   const img = ctx.getImageData(0, 0, w, h), d = img.data, n = w * h;
-  const g = new Uint8Array(n), m = new Uint8Array(n);
+  let g = new Uint8Array(n);
   for (let i = 0, j = 0; j < n; i += 4, j++) g[j] = (d[i] * 299 + d[i + 1] * 587 + d[i + 2] * 114) / 1000;
-  m.set(g);
-  const v = new Uint8Array(9);
-  for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++){
-    const o = y * w + x;
-    if (g[o] > 235 && g[o - 1] > 235 && g[o + 1] > 235) continue;  // 흰 바탕은 건너뛰어 빠르게
-    let k = 0;
-    for (let dy = -w; dy <= w; dy += w) for (let dx = -1; dx <= 1; dx++) v[k++] = g[o + dy + dx];
-    v.sort(); m[o] = v[4];
+  if (job.vector){
+    // 글자 높이에 맞춰 선 굵기를 늘림: 배율이 크면 더 굵게, 두 번째 처리에서는 한 단계 더
+    const r = Math.max(1, Math.round(job.scale / 7)) + (job.alt ? 1 : 0);
+    g = minFilter(g, w, h, Math.min(r, 3));
+  } else if (!job.alt){
+    const m = new Uint8Array(g), v = new Uint8Array(9);
+    for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++){
+      const o = y * w + x;
+      if (g[o] > 235 && g[o - 1] > 235 && g[o + 1] > 235) continue;  // 흰 바탕은 건너뛰어 빠르게
+      let k = 0;
+      for (let dy = -w; dy <= w; dy += w) for (let dx = -1; dx <= 1; dx++) v[k++] = g[o + dy + dx];
+      v.sort(); m[o] = v[4];
+    }
+    g = m;
   }
   const hist = new Uint32Array(256);
-  for (let j = 0; j < n; j++) hist[m[j]]++;
+  for (let j = 0; j < n; j++) hist[g[j]]++;
   // 하위 1%는 검정, 밝은 쪽 40%는 흰색으로 늘림
   let acc = 0, lo = 0, hi = 255;
   for (let t = 0; t < 256; t++){ acc += hist[t]; if (acc > n * 0.01){ lo = t; break; } }
   acc = 0; for (let t = 255; t >= 0; t--){ acc += hist[t]; if (acc > n * 0.4){ hi = t; break; } }
   if (hi - lo < 40) hi = Math.min(255, lo + 40);
   const sc = 255 / (hi - lo);
-  for (let i = 0, j = 0; j < n; i += 4, j++){ const val = Math.max(0, Math.min(255, (m[j] - lo) * sc)); d[i] = d[i + 1] = d[i + 2] = val; }
+  for (let i = 0, j = 0; j < n; i += 4, j++){ const val = Math.max(0, Math.min(255, (g[j] - lo) * sc)); d[i] = d[i + 1] = d[i + 2] = val; }
   ctx.putImageData(img, 0, 0);
+}
+/* 가로, 세로로 나눠 하는 최솟값 필터 (어두운 선을 r픽셀씩 굵게) */
+function minFilter(src, w, h, r){
+  const tmp = new Uint8Array(src.length), out = new Uint8Array(src.length);
+  for (let y = 0; y < h; y++){
+    const row = y * w;
+    for (let x = 0; x < w; x++){
+      let m = 255;
+      for (let k = Math.max(0, x - r), e = Math.min(w - 1, x + r); k <= e; k++) if (src[row + k] < m) m = src[row + k];
+      tmp[row + x] = m;
+    }
+  }
+  for (let x = 0; x < w; x++) for (let y = 0; y < h; y++){
+    let m = 255;
+    for (let k = Math.max(0, y - r), e = Math.min(h - 1, y + r); k <= e; k++) if (tmp[k * w + x] < m) m = tmp[k * w + x];
+    out[y * w + x] = m;
+  }
+  return out;
 }
 async function readWords(worker, canvas){
   const {data} = await worker.recognize(canvas, {}, {blocks: true, text: false});
@@ -1008,7 +1084,7 @@ async function readWords(worker, canvas){
     const t = w.text.trim();
     if (!t) continue;
     // 확신도가 낮아도 선번호처럼 생긴 것(영문+숫자 조합)은 남긴다. 테스트에서 맞게 읽고도 확신도 0이 나오는 경우가 있었다
-    if (w.confidence < 55 && !(/\d/.test(t) && /^[A-Z0-9][A-Z0-9\-\/._()+:#]{1,15}$/i.test(t))) continue;
+    if (w.confidence < 55 && !(/\d/.test(t) && /^[A-Z0-9][A-Z0-9\-\/._()+:#,]{1,60}$/i.test(t))) continue;
     if (t.replace(/[^0-9A-Za-z가-힣]/g, "").length < 2) continue;  // 한 글자 잡음 제거
     if (/^[-_.\/|()]+$/.test(t)) continue;
     out.push({t, c: w.confidence, ...w.bbox});
