@@ -32,7 +32,6 @@ function ocrDialog(fileId, presetPages){
   const f = fileById(fileId);
   if (OCR){ toast("이미 글자 인식이 진행 중입니다"); return; }
   const scanPages = PAGES.filter(p => p.fileId === fileId && p.text.replace(/\s/g, "").length <= 15).map(p => p.page);
-  const mode = getPref("mode", "wire"), q = getPref("q", "fine"), rot = getPref("rot", "1");
   openSheet(`<h3 style="margin-top:0">글자 인식</h3>
     <div class="muted">${esc(f.name)} · 전체 ${f.pages}쪽 · 인식 완료 ${ocrCount(fileId)}쪽</div>
     <label class="f" for="oPages">인식할 쪽 (비우면 전체)</label>
@@ -42,13 +41,9 @@ function ocrDialog(fileId, presetPages){
       ${scanPages.length && scanPages.length < f.pages ? `<span class="chip x" data-pp="${compactPages(scanPages)}">스캔된 쪽만 (${scanPages.length})</span>` : ""}
       ${V.fileId === fileId && $("#viewer").classList.contains("open") ? `<span class="chip x" data-pp="${V.page}">지금 보는 ${V.page}쪽</span>` : ""}
     </div>
-    <label class="f">읽을 글자</label>
-    ${Object.entries(OCR_MODES).map(([k, m]) => `<label class="opt"><input type="radio" name="oMode" value="${k}" ${k === mode ? "checked" : ""}><span>${m.label}${k === "wire" ? '<br><span class="muted">헷갈리는 글자(O/0, l/1)가 줄어 선번호가 더 정확해요</span>' : ""}</span></label>`).join("")}
-    <label class="f">해상도</label>
-    ${Object.entries(OCR_QUALITY).map(([k, m]) => `<label class="opt"><input type="radio" name="oQ" value="${k}" ${k === q ? "checked" : ""}><span>${m.label}</span></label>`).join("")}
+    ${ocrOptionsHtml()}
     ${ocrCount(fileId) ? `<label class="opt"><input type="checkbox" id="oMerge" checked><span>이전 인식 결과에 더하기<br><span class="muted">끄면 이전 결과를 지우고 새로 읽어요. 설정을 바꿔 여러 번 돌리면 더 많이 찾을 수 있어요</span></span></label>` : ""}
-    <label class="opt"><input type="checkbox" id="oRot" ${rot === "1" ? "checked" : ""}><span>세로로 쓰인 선번호도 읽기<br><span class="muted">시간이 약 2배 걸려요</span></span></label>
-    <div class="muted" style="margin-top:6px">한 쪽에 1~3분 정도 걸려요. 인식이 끝난 쪽은 바로 저장되니 중간에 멈춰도 됩니다. 인식하는 동안 화면을 켜 두세요.</div>
+    <div class="muted" style="margin-top:6px">한 쪽에 1~3분 정도 걸려요. 인식이 끝난 쪽은 바로 저장되니 중간에 멈춰도 됩니다. 인식하는 동안 화면을 켜 두세요. 화면이 꺼지면 멈춰요.</div>
     <div class="row" style="margin-top:16px"><span class="grow"></span>
       <button class="btn" id="oCancel">취소</button><button class="btn primary" id="oStart">인식 시작</button></div>`);
   $("#sheetPanel").querySelectorAll("[data-pp]").forEach(c => c.onclick = () => $("#oPages").value = c.dataset.pp);
@@ -56,11 +51,9 @@ function ocrDialog(fileId, presetPages){
   $("#oStart").onclick = () => {
     let pages;
     try { pages = parsePages($("#oPages").value, f.pages); } catch (err){ toast(err.message); return; }
-    const opts = {mode: document.querySelector('input[name="oMode"]:checked').value,
-      q: document.querySelector('input[name="oQ"]:checked').value, rot: $("#oRot").checked, merge: !!($("#oMerge") && $("#oMerge").checked)};
-    setPref("mode", opts.mode); setPref("q", opts.q); setPref("rot", opts.rot ? "1" : "0");
+    const opts = {...readOcrOptions(), merge: !!($("#oMerge") && $("#oMerge").checked)};
     history.back();
-    runOcr(fileId, pages, opts);
+    runOcrJobs([{fileId, pages}], opts);
   };
 }
 function compactPages(list){
@@ -103,48 +96,130 @@ function setOcrBar(msg, pct){
   $("#ocrProg").style.width = Math.round(pct * 100) + "%";
 }
 
-async function runOcr(fileId, pages, opts){
-  const f = fileById(fileId);
+async function runOcrJobs(jobs, opts){
   OCR = {stop: false};
   $("#ocrStop").onclick = () => { if (OCR){ OCR.stop = true; setOcrBar("멈추는 중… (지금 조각까지만 읽고 멈춰요)", 0); } };
-  let wake = null;
-  try { wake = await navigator.wakeLock?.request("screen"); } catch {}
-  let worker, done = 0, words = 0;
+  await keepAwake();
+  const totalPages = jobs.reduce((n, j) => n + j.pages.length, 0), started = Date.now();
+  let worker, done = 0, words = 0, failed = [];
   try {
     setOcrBar("글자 인식 엔진 준비 중…", 0);
     const pdfjs = await getPdfjs();
     worker = await makeWorker(opts.mode);
-    const blob = await tx(["blobs"], "readonly", t => req(t.objectStore("blobs").get(fileId)));
-    const doc = await pdfjs.getDocument({data: new Uint8Array(await blob.arrayBuffer())}).promise;
-    for (let i = 0; i < pages.length && !OCR.stop; i++){
-      const pn = pages[i];
-      const label = `${f.name} ${pn}쪽 (${i + 1}/${pages.length})`;
-      const res = await ocrPage(doc, pn, worker, opts, (k, n) => setOcrBar(`글자 인식 중: ${label} · 조각 ${k}/${n}`, (i + k / n) / pages.length));
-      if (!res) break;  // 중지
-      await tx(["pages"], "readwrite", async t => {
-        const st = t.objectStore("pages");
-        const rec = await req(st.get([fileId, pn]));
-        const words = opts.merge && rec.ocr ? unionWords(rec.ocr.words, res) : res;
-        rec.ocr = {words, text: words.map(w => w.t).join(" "), at: Date.now(), mode: opts.mode, q: opts.q, runs: (opts.merge && rec.ocr ? rec.ocr.runs || 1 : 0) + 1};
-        st.put(rec);
-      });
-      done++; words += res.length;
+    for (let fi = 0; fi < jobs.length && !OCR.stop; fi++){
+      const {fileId, pages} = jobs[fi], f = fileById(fileId);
+      let doc;
+      try {
+        const blob = await tx(["blobs"], "readonly", t => req(t.objectStore("blobs").get(fileId)));
+        doc = await pdfjs.getDocument({data: new Uint8Array(await blob.arrayBuffer())}).promise;
+        for (let i = 0; i < pages.length && !OCR.stop; i++){
+          const pn = pages[i];
+          const eta = done ? ` · 남은 시간 약 ${fmtDur((Date.now() - started) / done * (totalPages - done))}` : "";
+          const label = (jobs.length > 1 ? `도면 ${fi + 1}/${jobs.length} ` : "") + `${f.name} ${pn}쪽 · 전체 ${done + 1}/${totalPages}쪽${eta}`;
+          const res = await ocrPage(doc, pn, worker, opts, (k, n) => {
+            setOcrBar(`글자 인식 중: ${label} · 조각 ${k}/${n}`, (done + k / n) / totalPages);
+            const bo = $("#boMsg"); if (bo && !$("#blackout").hidden) bo.textContent = $("#ocrMsg").textContent;
+          });
+          if (!res) break;  // 중지
+          await tx(["pages"], "readwrite", async t => {
+            const st = t.objectStore("pages");
+            const rec = await req(st.get([fileId, pn]));
+            const merged = opts.merge && rec.ocr ? unionWords(rec.ocr.words, res) : res;
+            rec.ocr = {words: merged, text: merged.map(w => w.t).join(" "), at: Date.now(), mode: opts.mode, q: opts.q, runs: (opts.merge && rec.ocr ? rec.ocr.runs || 1 : 0) + 1};
+            st.put(rec);
+          });
+          done++; words += res.length;
+        }
+      } catch (err){
+        // 한 도면이 망가져 있어도 나머지는 계속한다
+        console.error(err); failed.push(f.name);
+        if (jobs.length === 1) throw err;
+      } finally {
+        if (doc) await doc.destroy().catch(() => {});
+      }
     }
-    await doc.destroy();
   } catch (err){
     console.error(err);
     toast("글자 인식 실패: " + err.message, 5000);
   } finally {
     if (worker) worker.terminate().catch(() => {});
-    try { wake && wake.release(); } catch {}
+    try { wakeLock && wakeLock.release(); } catch {}
+    wakeLock = null;
     const stopped = OCR && OCR.stop;
     OCR = null;
-    $("#ocrbar").hidden = true;
+    $("#ocrbar").hidden = true; blackout(false);
     await loadAll();
-    if (done) toast(`${done}쪽 글자 인식 완료 · 글자 ${words}개${stopped ? " (중지됨)" : ""}`, 3500);
-    if ($("#viewer").classList.contains("open") && V.fileId === fileId) renderPage(); else render();
+    if (done || failed.length) toast(`${done}쪽 글자 인식 완료 · 글자 ${words}개${stopped ? " (중지됨)" : ""}${failed.length ? ` · 읽지 못한 도면 ${failed.length}개: ${failed.slice(0, 3).join(", ")}` : ""}`, 6000);
+    if ($("#viewer").classList.contains("open")) renderPage(); else render();
   }
 }
+function fmtDur(ms){
+  const m = Math.round(ms / 60000);
+  return m < 60 ? `${Math.max(1, m)}분` : `${Math.floor(m / 60)}시간 ${m % 60}분`;
+}
+
+/* 인식 설정 (읽을 글자, 해상도, 세로 글자) — 한 도면용과 전체용 창이 같이 쓴다 */
+function ocrOptionsHtml(){
+  const mode = getPref("mode", "wire"), q = getPref("q", "fine"), rot = getPref("rot", "1");
+  return `<label class="f">읽을 글자</label>
+    ${Object.entries(OCR_MODES).map(([k, m]) => `<label class="opt"><input type="radio" name="oMode" value="${k}" ${k === mode ? "checked" : ""}><span>${m.label}${k === "wire" ? '<br><span class="muted">헷갈리는 글자(O/0, l/1)가 줄어 선번호가 더 정확해요</span>' : ""}</span></label>`).join("")}
+    <label class="f">해상도</label>
+    ${Object.entries(OCR_QUALITY).map(([k, m]) => `<label class="opt"><input type="radio" name="oQ" value="${k}" ${k === q ? "checked" : ""}><span>${m.label}</span></label>`).join("")}
+    <label class="opt"><input type="checkbox" id="oRot" ${rot === "1" ? "checked" : ""}><span>세로로 쓰인 선번호도 읽기<br><span class="muted">시간이 약 2배 걸려요</span></span></label>`;
+}
+function readOcrOptions(){
+  const opts = {mode: document.querySelector('input[name="oMode"]:checked').value,
+    q: document.querySelector('input[name="oQ"]:checked').value, rot: $("#oRot").checked};
+  setPref("mode", opts.mode); setPref("q", opts.q); setPref("rot", opts.rot ? "1" : "0");
+  return opts;
+}
+
+/* 등록된 도면 전체를 차례로 인식. 쪽마다 바로 저장되므로, 멈췄다가 "아직 안 한 쪽만"으로 다시 돌리면 이어서 한다 */
+function batchOcrDialog(){
+  if (OCR){ toast("이미 글자 인식이 진행 중입니다"); return; }
+  // PDF 안에 글자가 이미 들어 있는 쪽은 인식할 필요가 없어서 뺀다
+  const needs = p => p.text.replace(/\s/g, "").length <= 15;
+  const total = PAGES.filter(needs).length, todo = PAGES.filter(p => needs(p) && !p.ocr).length;
+  openSheet(`<h3 style="margin-top:0">전체 도면 글자 인식</h3>
+    <div class="muted">도면 ${FILES.length}개 · 인식이 필요한 쪽 ${total}쪽 · 그중 아직 안 한 쪽 ${todo}쪽<br>PDF 안에 글자가 이미 있는 쪽은 건너뛰어요</div>
+    <label class="f">인식할 쪽</label>
+    <label class="opt"><input type="radio" name="bTarget" value="todo" checked><span>아직 인식 안 한 쪽만 (${todo}쪽)<br><span class="muted">중간에 멈췄을 때도 이걸로 다시 누르면 이어서 해요</span></span></label>
+    <label class="opt"><input type="radio" name="bTarget" value="all"><span>모든 쪽 다시 (${total}쪽)<br><span class="muted">이전 결과는 지우지 않고 새로 찾은 글자만 더해요. 교차 인식을 돌릴 때 쓰세요</span></span></label>
+    ${ocrOptionsHtml()}
+    <div class="warn">쪽당 탭에서 대략 2~5분 걸려요. 아직 안 한 ${todo}쪽이면 약 ${fmtDur(todo * 2 * 60000)}~${fmtDur(todo * 5 * 60000)} 걸려서, 충전기를 꽂고 밤새 돌리는 걸 추천해요.
+      화면이 꺼지면 멈추니 진행 중에 <b>화면 검게</b>를 눌러 두세요. 화면은 켜진 채로 검게만 보여서 배터리를 아껴요.</div>
+    <div class="row" style="margin-top:16px"><span class="grow"></span>
+      <button class="btn" id="bCancel">취소</button><button class="btn primary" id="bStart">전체 인식 시작</button></div>`);
+  $("#bCancel").onclick = () => history.back();
+  $("#bStart").onclick = () => {
+    const target = document.querySelector('input[name="bTarget"]:checked').value;
+    const opts = {...readOcrOptions(), merge: target === "all"};
+    const jobs = FILES.map(f => ({fileId: f.id, pages: PAGES.filter(p => p.fileId === f.id && needs(p) && (target === "all" || !p.ocr)).map(p => p.page).sort((a, b) => a - b)}))
+      .filter(j => j.pages.length);
+    if (!jobs.length){ toast("인식할 쪽이 없습니다"); return; }
+    history.back();
+    runOcrJobs(jobs, opts);
+  };
+}
+
+/* 화면 검게: 화면 꺼짐 방지(Wake Lock)는 유지한 채 검은 화면만 보여 준다. 누르면 돌아옴 */
+function blackout(on){
+  let b = $("#blackout");
+  if (!b){
+    b = document.createElement("div"); b.id = "blackout";
+    b.innerHTML = '<div id="boMsg"></div><div class="bohint">화면을 누르면 돌아가요 · 인식은 계속 진행 중</div>';
+    b.onclick = () => blackout(false);
+    document.body.appendChild(b);
+  }
+  b.hidden = !on;
+  if (on) $("#boMsg").textContent = $("#ocrMsg").textContent;
+}
+let wakeLock = null;
+async function keepAwake(){
+  try { if (navigator.wakeLock && !wakeLock && document.visibilityState === "visible") wakeLock = await navigator.wakeLock.request("screen"); wakeLock && wakeLock.addEventListener("release", () => wakeLock = null); } catch {}
+}
+// 다른 앱을 보고 돌아오면 화면 꺼짐 방지를 다시 건다
+document.addEventListener("visibilitychange", () => { if (OCR && document.visibilityState === "visible") keepAwake(); });
 
 /* 한 쪽을 조각내어 읽고, 좌표를 쪽 크기 기준(0~1)으로 돌려준다 */
 // 글자 높이가 30px 안팎일 때 가장 잘 읽혀서, 첫 번째로 읽은 글자 크기를 보고 정밀 모드의 두 번째 배율을 정한다
