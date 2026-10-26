@@ -1,0 +1,706 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1f3a5f">
+<title>KTX 도면 찾기</title>
+<!--MANIFEST-->
+<style>
+:root{
+  --bg:#f4f6f9; --card:#ffffff; --ink:#1b2430; --sub:#5b6676; --line:#dde2ea;
+  --accent:#1f5fae; --accent-ink:#ffffff; --chip:#e8eef7; --chip-ink:#1f4f8f;
+  --hit:#ffe36e; --warn:#a15c00; --warn-bg:#fff4e0; --danger:#c0362c;
+  --viewer-bg:#3a3f47;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#12161c; --card:#1c222b; --ink:#e7ebf0; --sub:#9aa5b4; --line:#2c3440;
+    --accent:#5b9bf0; --accent-ink:#0d1520; --chip:#24324a; --chip-ink:#a9c8f5;
+    --hit:#b8920f; --warn:#f0b35a; --warn-bg:#33270f; --danger:#ff7b70;
+    --viewer-bg:#0b0d10;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#12161c; --card:#1c222b; --ink:#e7ebf0; --sub:#9aa5b4; --line:#2c3440;
+  --accent:#5b9bf0; --accent-ink:#0d1520; --chip:#24324a; --chip-ink:#a9c8f5;
+  --hit:#b8920f; --warn:#f0b35a; --warn-bg:#33270f; --danger:#ff7b70;
+  --viewer-bg:#0b0d10;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,"Noto Sans KR","Malgun Gothic",sans-serif;font-size:16px;-webkit-tap-highlight-color:transparent;word-break:keep-all}
+button,input,select,textarea{font:inherit;color:inherit}
+header{position:sticky;top:0;z-index:5;background:var(--card);border-bottom:1px solid var(--line);padding:10px 16px 0}
+.top{display:flex;align-items:center;gap:8px;max-width:900px;margin:0 auto}
+.top h1{font-size:18px;margin:0;flex:1;white-space:nowrap}
+.searchbox{display:flex;gap:8px;max-width:900px;margin:10px auto 0}
+.searchbox input{flex:1;min-width:0;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:var(--bg);font-size:17px}
+.tabs{display:flex;max-width:900px;margin:8px auto 0}
+.tabs button{flex:1;padding:10px 4px;border:0;background:none;border-bottom:3px solid transparent;color:var(--sub);font-weight:600}
+.tabs button.on{color:var(--accent);border-color:var(--accent)}
+main{max-width:900px;margin:0 auto;padding:12px 16px 80px}
+.btn{padding:10px 14px;border-radius:10px;border:1px solid var(--line);background:var(--card);font-weight:600;cursor:pointer;white-space:nowrap}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.btn.danger{color:var(--danger)}
+.btn.sm{padding:6px 10px;font-size:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:10px}
+.result{cursor:pointer}
+.result .t{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
+.result .fname{font-weight:700;word-break:break-all}
+.result .pg{color:var(--accent);font-weight:700;white-space:nowrap}
+.snip{color:var(--sub);font-size:14px;margin-top:6px;line-height:1.5;word-break:break-all}
+mark{background:var(--hit);color:inherit;border-radius:3px;padding:0 1px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.chip{background:var(--chip);color:var(--chip-ink);border-radius:999px;padding:3px 10px;font-size:13px;font-weight:600}
+.chip.x{cursor:pointer}
+.muted{color:var(--sub);font-size:14px}
+.warn{background:var(--warn-bg);color:var(--warn);border-radius:8px;padding:8px 10px;font-size:14px;margin-top:8px}
+.empty{text-align:center;color:var(--sub);padding:40px 10px;line-height:1.7}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.grow{flex:1;min-width:0}
+.progress{height:6px;background:var(--line);border-radius:3px;overflow:hidden;margin-top:8px}
+.progress>div{height:100%;background:var(--accent);width:0}
+label.f{display:block;font-size:14px;color:var(--sub);margin:10px 0 4px}
+input.t,textarea.t,select.t{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg)}
+.recent{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 12px}
+/* viewer */
+#viewer{position:fixed;inset:0;z-index:20;background:var(--viewer-bg);display:none;flex-direction:column}
+#viewer.open{display:flex}
+.vbar{display:flex;align-items:center;gap:6px;padding:8px 10px;background:var(--card);border-bottom:1px solid var(--line);flex-wrap:wrap}
+.vbar .title{flex:1;min-width:120px;font-weight:700;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.vbar input{width:64px;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--bg);text-align:center}
+#stage{flex:1;overflow:auto;position:relative;touch-action:pan-x pan-y}
+#pagewrap{position:relative;margin:10px auto;box-shadow:0 2px 12px rgba(0,0,0,.4);background:#fff;transform-origin:0 0}
+#pagewrap canvas{display:block}
+#hl{position:absolute;inset:0;pointer-events:none}
+#hl div{position:absolute;background:rgba(255,200,0,.42);outline:2px solid rgba(230,120,0,.9);border-radius:2px}
+.vfoot{background:var(--card);border-top:1px solid var(--line);padding:8px 10px;max-height:40vh;overflow:auto}
+.sheet{position:fixed;inset:0;z-index:30;background:rgba(0,0,0,.45);display:none;align-items:flex-end;justify-content:center}
+.sheet.open{display:flex}
+.sheet .panel{background:var(--card);width:100%;max-width:640px;border-radius:16px 16px 0 0;padding:16px;max-height:90vh;overflow:auto}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#222a;backdrop-filter:blur(4px);color:#fff;padding:10px 16px;border-radius:10px;z-index:50;display:none;max-width:90vw;text-align:center}
+.lock{font-size:12px;color:var(--sub);display:flex;gap:4px;align-items:center}
+</style>
+</head>
+<body>
+<header>
+  <div class="top">
+    <h1>🚄 KTX 도면 찾기</h1>
+    <span class="lock" title="모든 도면은 이 기기 안에만 저장됩니다">🔒 기기 내 저장</span>
+  </div>
+  <form class="searchbox" id="sform" autocomplete="off">
+    <input id="q" type="search" placeholder="장치명, 회로번호, 고장 증상, 도면번호…" enterkeyhint="search">
+    <button class="btn primary" type="submit">검색</button>
+  </form>
+  <nav class="tabs">
+    <button data-tab="search" class="on">검색</button>
+    <button data-tab="tags">태그</button>
+    <button data-tab="files">도면</button>
+    <button data-tab="settings">설정</button>
+  </nav>
+</header>
+<main>
+  <section id="tab-search"></section>
+  <section id="tab-tags" hidden></section>
+  <section id="tab-files" hidden></section>
+  <section id="tab-settings" hidden></section>
+</main>
+
+<input type="file" id="picker" accept="application/pdf,.pdf" multiple hidden>
+<input type="file" id="restorePicker" accept="application/json,.json" hidden>
+
+<div id="viewer">
+  <div class="vbar">
+    <button class="btn sm" id="vClose">← 닫기</button>
+    <div class="title" id="vTitle"></div>
+    <button class="btn sm" id="vPrev">◀</button>
+    <input id="vPage" inputmode="numeric"> <span class="muted" id="vTotal"></span>
+    <button class="btn sm" id="vNext">▶</button>
+    <button class="btn sm" id="vZoomOut">－</button>
+    <button class="btn sm" id="vFit">맞춤</button>
+    <button class="btn sm" id="vZoomIn">＋</button>
+  </div>
+  <div id="stage"><div id="pagewrap"><canvas id="cv"></canvas><div id="hl"></div></div></div>
+  <div class="vfoot" id="vFoot"></div>
+</div>
+
+<div class="sheet" id="sheet"><div class="panel" id="sheetPanel"></div></div>
+<div class="toast" id="toast"></div>
+
+<!--PDFJS-->
+<script>
+"use strict";
+/* ---------- storage (IndexedDB, 이 기기 안에서만) ---------- */
+const DB_NAME = "ktx-dwg", DB_VER = 1;
+let db;
+function openDB(){
+  return new Promise((res, rej) => {
+    const r = indexedDB.open(DB_NAME, DB_VER);
+    r.onupgradeneeded = () => {
+      const d = r.result;
+      d.createObjectStore("files", {keyPath: "id"});        // 메타데이터
+      d.createObjectStore("blobs");                          // PDF 원본 (key = file id)
+      const p = d.createObjectStore("pages", {keyPath: ["fileId", "page"]});
+      p.createIndex("fileId", "fileId");
+      const t = d.createObjectStore("tags", {keyPath: "id"});
+      t.createIndex("fileId", "fileId");
+    };
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+}
+function tx(stores, mode, fn){
+  return new Promise((res, rej) => {
+    const t = db.transaction(stores, mode);
+    let out;
+    Promise.resolve(fn(t)).then(v => out = v);
+    t.oncomplete = () => res(out);
+    t.onerror = () => rej(t.error);
+    t.onabort = () => rej(t.error);
+  });
+}
+const req = r => new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+const getAll = (store) => tx([store], "readonly", t => req(t.objectStore(store).getAll()));
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+
+/* ---------- in-memory index ---------- */
+let FILES = [], PAGES = [], TAGS = [];
+async function loadAll(){
+  [FILES, PAGES, TAGS] = await Promise.all([getAll("files"), getAll("pages"), getAll("tags")]);
+  FILES.sort((a, b) => a.name.localeCompare(b.name, "ko", {numeric: true}));
+  for (const p of PAGES) p.norm = norm(p.text);
+}
+const fileById = id => FILES.find(f => f.id === id);
+const tagsOf = (fileId, page) => TAGS.filter(t => t.fileId === fileId && t.page === page);
+
+/* ---------- text helpers ---------- */
+const norm = s => (s || "").toLowerCase().normalize("NFC").replace(/[\s\-_·.,/()\[\]]+/g, "");
+const esc = s => (s || "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+function tokens(q){ return q.split(/\s+/).map(norm).filter(Boolean); }
+
+function snippet(text, toks){
+  // 원문에서 첫 번째 일치 위치 주변을 잘라 보여준다 (공백 무시 매칭)
+  const map = []; let n = "";
+  const low = text.toLowerCase().normalize("NFC");
+  for (let i = 0; i < low.length; i++){
+    if (!/[\s\-_·.,/()\[\]]/.test(low[i])){ n += low[i]; map.push(i); }
+  }
+  const ranges = [];
+  for (const tk of toks){
+    let from = 0, k;
+    while ((k = n.indexOf(tk, from)) !== -1 && ranges.length < 40){
+      ranges.push([map[k], map[k + tk.length - 1] + 1]); from = k + tk.length;
+    }
+  }
+  if (!ranges.length) return esc(text.slice(0, 120));
+  ranges.sort((a, b) => a[0] - b[0]);
+  const start = Math.max(0, ranges[0][0] - 50), end = Math.min(text.length, ranges[0][1] + 90);
+  let out = "", pos = start;
+  for (const [a, b] of ranges){
+    if (b <= pos || a >= end) continue;
+    const aa = Math.max(a, pos);
+    out += esc(text.slice(pos, aa)) + "<mark>" + esc(text.slice(aa, Math.min(b, end))) + "</mark>";
+    pos = Math.min(b, end);
+  }
+  out += esc(text.slice(pos, end));
+  return (start > 0 ? "…" : "") + out + (end < text.length ? "…" : "");
+}
+
+/* ---------- search ---------- */
+function search(q){
+  const toks = tokens(q);
+  if (!toks.length) return [];
+  const results = new Map();  // key fileId|page
+  const add = (fileId, page, score, src) => {
+    const k = fileId + "|" + page;
+    const r = results.get(k) || {fileId, page, score: 0, src: new Set()};
+    r.score += score; r.src.add(src); results.set(k, r);
+  };
+  // 페이지마다: 모든 검색어가 (본문 + 태그 + 파일명) 어딘가에 있어야 함
+  const tagText = new Map();
+  for (const t of TAGS){
+    const k = t.fileId + "|" + t.page;
+    tagText.set(k, (tagText.get(k) || "") + " " + norm(t.label + " " + (t.note || "")));
+  }
+  for (const p of PAGES){
+    const f = fileById(p.fileId); if (!f) continue;
+    const k = p.fileId + "|" + p.page;
+    const tt = tagText.get(k) || "", fn = norm(f.name + " " + (f.memo || ""));
+    let ok = true, score = 0;
+    for (const tk of toks){
+      const inTag = tt.includes(tk), inBody = p.norm.includes(tk), inName = fn.includes(tk);
+      if (!inTag && !inBody && !inName){ ok = false; break; }
+      score += (inTag ? 10 : 0) + (inBody ? 3 + Math.min(5, p.norm.split(tk).length - 1) : 0) + (inName ? 1 : 0);
+    }
+    if (!ok) continue;
+    // 파일명만 일치하는 경우 모든 페이지가 뜨지 않게, 첫 페이지로만
+    const onlyName = toks.every(tk => !tt.includes(tk) && !p.norm.includes(tk));
+    if (onlyName && p.page !== 1) continue;
+    add(p.fileId, p.page, score, tt && toks.some(tk => tt.includes(tk)) ? "tag" : onlyName ? "name" : "body");
+  }
+  return [...results.values()].sort((a, b) => b.score - a.score || fileById(a.fileId).name.localeCompare(fileById(b.fileId).name, "ko", {numeric: true}) || a.page - b.page);
+}
+
+/* ---------- UI: tabs ---------- */
+const $ = s => document.querySelector(s);
+let curTab = "search", lastQuery = "";
+function setTab(name){
+  curTab = name;
+  document.querySelectorAll(".tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === name));
+  for (const s of ["search", "tags", "files", "settings"]) $("#tab-" + s).hidden = s !== name;
+  render();
+}
+document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => setTab(b.dataset.tab));
+function render(){
+  if (curTab === "search") renderSearch();
+  if (curTab === "tags") renderTags();
+  if (curTab === "files") renderFiles();
+  if (curTab === "settings") renderSettings();
+}
+function toast(msg, ms = 2200){
+  const t = $("#toast"); t.textContent = msg; t.style.display = "block";
+  clearTimeout(toast._t); toast._t = setTimeout(() => t.style.display = "none", ms);
+}
+
+/* recent searches (per-device convenience) */
+function recent(){ try { return JSON.parse(localStorage.getItem("ktx-recent") || "[]"); } catch { return []; } }
+function pushRecent(q){
+  try { localStorage.setItem("ktx-recent", JSON.stringify([q, ...recent().filter(x => x !== q)].slice(0, 10))); } catch {}
+}
+
+$("#sform").onsubmit = e => {
+  e.preventDefault();
+  lastQuery = $("#q").value.trim();
+  if (lastQuery) pushRecent(lastQuery);
+  $("#q").blur();
+  setTab("search");
+};
+
+function renderSearch(){
+  const el = $("#tab-search");
+  if (!FILES.length){
+    el.innerHTML = `<div class="empty">아직 등록된 도면이 없습니다.<br>PDF 도면을 등록하면 도면 안의 글자로 검색할 수 있어요.<br><br>
+      <button class="btn primary" id="emptyAdd">＋ PDF 도면 등록</button></div>`;
+    $("#emptyAdd").onclick = () => $("#picker").click();
+    return;
+  }
+  const rc = recent();
+  let html = rc.length ? `<div class="muted">최근 검색</div><div class="recent">${rc.map(r => `<span class="chip x" data-q="${esc(r)}">${esc(r)}</span>`).join("")}</div>` : "";
+  if (!lastQuery){
+    html += `<div class="empty">검색어를 입력하세요.<br><span class="muted">예: 견인전동기, ATC, 회로번호 3142, 팬토그래프 상승불가<br>여러 단어를 띄어 쓰면 모두 포함된 페이지만 찾아요.</span></div>`;
+  } else {
+    const rs = search(lastQuery), toks = tokens(lastQuery);
+    html += `<div class="muted" style="margin-bottom:8px">“${esc(lastQuery)}” 결과 ${rs.length}건</div>`;
+    if (!rs.length) html += `<div class="empty">찾는 내용이 없습니다.<br><span class="muted">띄어쓰기를 줄이거나 다른 이름(약어, 영문)으로 검색해 보세요.<br>스캔본 도면은 글자가 없으니 페이지에 태그를 붙여 주세요.</span></div>`;
+    for (const r of rs.slice(0, 200)){
+      const f = fileById(r.fileId), p = PAGES.find(x => x.fileId === r.fileId && x.page === r.page);
+      const tg = tagsOf(r.fileId, r.page);
+      html += `<div class="card result" data-f="${r.fileId}" data-p="${r.page}">
+        <div class="t"><span class="fname">${esc(f.name)}</span><span class="pg">${r.page}쪽</span>${r.src.has("tag") ? '<span class="chip">태그 일치</span>' : ""}</div>
+        ${tg.length ? `<div class="chips">${tg.map(t => `<span class="chip">${esc(t.label)}</span>`).join("")}</div>` : ""}
+        ${p && p.text ? `<div class="snip">${snippet(p.text, toks)}</div>` : ""}
+      </div>`;
+    }
+    if (rs.length > 200) html += `<div class="muted">상위 200건만 표시합니다. 검색어를 더 구체적으로 입력해 보세요.</div>`;
+  }
+  el.innerHTML = html;
+  el.querySelectorAll(".recent .chip").forEach(c => c.onclick = () => { $("#q").value = c.dataset.q; lastQuery = c.dataset.q; pushRecent(lastQuery); renderSearch(); });
+  el.querySelectorAll(".result").forEach(c => c.onclick = () => openViewer(c.dataset.f, +c.dataset.p, lastQuery));
+}
+
+function renderTags(){
+  const el = $("#tab-tags");
+  if (!TAGS.length){
+    el.innerHTML = `<div class="empty">아직 태그가 없습니다.<br><span class="muted">도면을 열고 아래쪽 <b>＋ 태그</b>를 눌러<br>“팬토 상승불가”, “ATC 고장” 같은 고장 증상이나 회로 이름을 페이지에 붙여 두세요.<br>다음부터는 그 증상으로 바로 찾을 수 있어요.</span></div>`;
+    return;
+  }
+  const groups = new Map();
+  for (const t of TAGS){ const k = t.label.trim(); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(t); }
+  const keys = [...groups.keys()].sort((a, b) => a.localeCompare(b, "ko", {numeric: true}));
+  el.innerHTML = `<div class="muted" style="margin-bottom:8px">태그 ${keys.length}개 · 누르면 관련 페이지로 이동</div>` + keys.map(k => `
+    <div class="card"><div style="font-weight:700">${esc(k)}</div>
+    <div class="chips">${groups.get(k).map(t => { const f = fileById(t.fileId); return f ? `<span class="chip x" data-f="${t.fileId}" data-p="${t.page}" title="${esc(t.note || "")}">${esc(f.name)} · ${t.page}쪽</span>` : ""; }).join("")}</div></div>`).join("");
+  el.querySelectorAll(".chip.x").forEach(c => c.onclick = () => openViewer(c.dataset.f, +c.dataset.p, ""));
+}
+
+function fmtSize(b){ return b > 1048576 ? (b / 1048576).toFixed(1) + "MB" : Math.max(1, Math.round(b / 1024)) + "KB"; }
+function renderFiles(){
+  const el = $("#tab-files");
+  let html = `<div class="row" style="margin-bottom:10px"><button class="btn primary" id="addBtn">＋ PDF 도면 등록</button><span class="muted grow">도면 ${FILES.length}개</span></div>
+    <div id="importBox"></div>`;
+  for (const f of FILES){
+    const tc = TAGS.filter(t => t.fileId === f.id).length;
+    html += `<div class="card"><div class="row"><div class="grow"><div class="fname" style="font-weight:700;word-break:break-all">${esc(f.name)}</div>
+      <div class="muted">${f.pages}쪽 · ${fmtSize(f.size)} · 태그 ${tc}개${f.memo ? " · " + esc(f.memo) : ""}</div></div>
+      <button class="btn sm" data-open="${f.id}">열기</button><button class="btn sm" data-edit="${f.id}">편집</button></div>
+      ${f.textPages < f.pages * 0.5 ? `<div class="warn">글자가 거의 없는 도면입니다(스캔본일 가능성). 본문 검색이 안 되니 페이지에 태그를 붙여 주세요. (글자 있는 쪽 ${f.textPages}/${f.pages})</div>` : ""}
+    </div>`;
+  }
+  el.innerHTML = html;
+  $("#addBtn").onclick = () => $("#picker").click();
+  el.querySelectorAll("[data-open]").forEach(b => b.onclick = () => openViewer(b.dataset.open, 1, ""));
+  el.querySelectorAll("[data-edit]").forEach(b => b.onclick = () => editFile(b.dataset.edit));
+  if (importing) showImport();
+}
+
+function editFile(id){
+  const f = fileById(id);
+  openSheet(`<h3 style="margin-top:0">도면 편집</h3>
+    <label class="f">이름</label><input class="t" id="eName" value="${esc(f.name)}">
+    <label class="f">메모 (차종·호차·시스템 등, 검색에 포함)</label><input class="t" id="eMemo" value="${esc(f.memo || "")}" placeholder="예: KTX-산천 동력차 보조전원">
+    <div class="row" style="margin-top:16px"><button class="btn danger" id="eDel">도면 삭제</button><span class="grow"></span>
+    <button class="btn" id="eCancel">취소</button><button class="btn primary" id="eSave">저장</button></div>`);
+  $("#eCancel").onclick = closeSheet;
+  $("#eSave").onclick = async () => {
+    f.name = $("#eName").value.trim() || f.name; f.memo = $("#eMemo").value.trim();
+    await tx(["files"], "readwrite", t => t.objectStore("files").put(stripFile(f)));
+    closeSheet(); await loadAll(); render(); toast("저장했습니다");
+  };
+  $("#eDel").onclick = async () => {
+    if (!confirm(`“${f.name}” 도면과 붙인 태그를 모두 삭제할까요?`)) return;
+    await tx(["files", "blobs", "pages", "tags"], "readwrite", async t => {
+      t.objectStore("files").delete(id); t.objectStore("blobs").delete(id);
+      const pk = await req(t.objectStore("pages").index("fileId").getAllKeys(id));
+      pk.forEach(k => t.objectStore("pages").delete(k));
+      const tk = await req(t.objectStore("tags").index("fileId").getAllKeys(id));
+      tk.forEach(k => t.objectStore("tags").delete(k));
+    });
+    closeSheet(); await loadAll(); render(); toast("삭제했습니다");
+  };
+}
+const stripFile = f => ({id: f.id, name: f.name, memo: f.memo || "", size: f.size, pages: f.pages, textPages: f.textPages, addedAt: f.addedAt, hash: f.hash});
+
+function renderSettings(){
+  const el = $("#tab-settings");
+  el.innerHTML = `
+    <div class="card"><b>🔒 보안</b><div class="muted" style="margin-top:6px;line-height:1.6">
+      등록한 PDF와 태그는 <b>이 기기의 앱 저장공간에만</b> 저장됩니다. 서버로 보내는 기능이 없고, 인터넷이 없어도 검색과 열람이 됩니다.
+      기기 분실에 대비해 화면 잠금(지문·PIN)을 꼭 켜 두세요.</div></div>
+    <div class="card"><b>저장공간</b><div class="muted" id="quota" style="margin-top:6px">확인 중…</div>
+      <div class="row" style="margin-top:8px"><button class="btn sm" id="persistBtn">저장공간 유지 요청</button></div>
+      <div class="muted" style="margin-top:6px">브라우저가 공간이 부족할 때 데이터를 지우지 않도록 요청합니다.</div></div>
+    <div class="card"><b>태그 백업</b><div class="muted" style="margin-top:6px;line-height:1.6">
+      태그와 메모만 파일로 저장합니다 (PDF 원본은 포함되지 않음). 기기를 바꾸면 같은 PDF를 다시 등록한 뒤 복원하세요.</div>
+      <div class="row" style="margin-top:8px"><button class="btn sm" id="bkBtn">백업 파일 저장</button><button class="btn sm" id="rsBtn">백업 복원</button></div></div>
+    <div class="card"><b>화면</b><div class="row" style="margin-top:8px">
+      <select class="t" id="themeSel" style="width:auto"><option value="">시스템 설정 따름</option><option value="light">밝게</option><option value="dark">어둡게</option></select></div></div>
+    <div class="card"><b>모든 데이터 삭제</b><div class="row" style="margin-top:8px"><button class="btn sm danger" id="wipeBtn">도면·태그 전부 삭제</button></div></div>`;
+  (async () => {
+    let s = "";
+    if (navigator.storage && navigator.storage.estimate){
+      const e = await navigator.storage.estimate();
+      s = `사용 ${fmtSize(e.usage || 0)} / 사용 가능 약 ${fmtSize(e.quota || 0)}`;
+      if (navigator.storage.persisted) s += (await navigator.storage.persisted()) ? " · 유지됨 ✅" : " · 유지 요청 안 됨";
+    } else s = "이 브라우저에서는 확인할 수 없습니다.";
+    const q = $("#quota"); if (q) q.textContent = s;
+  })();
+  $("#persistBtn").onclick = async () => {
+    const ok = navigator.storage && navigator.storage.persist ? await navigator.storage.persist() : false;
+    toast(ok ? "저장공간이 유지되도록 설정했습니다" : "브라우저가 요청을 거절했습니다. 앱을 홈 화면에 설치하면 승인될 가능성이 높아요", 3500);
+    renderSettings();
+  };
+  $("#bkBtn").onclick = backup;
+  $("#rsBtn").onclick = () => $("#restorePicker").click();
+  $("#themeSel").value = getTheme();
+  $("#themeSel").onchange = e => setTheme(e.target.value);
+  $("#wipeBtn").onclick = async () => {
+    if (!confirm("등록한 도면과 태그를 모두 삭제합니다. 되돌릴 수 없습니다. 계속할까요?")) return;
+    await tx(["files", "blobs", "pages", "tags"], "readwrite", t => { for (const s of ["files", "blobs", "pages", "tags"]) t.objectStore(s).clear(); });
+    await loadAll(); render(); toast("모두 삭제했습니다");
+  };
+}
+function getTheme(){ try { return localStorage.getItem("ktx-theme") || ""; } catch { return ""; } }
+function setTheme(v){
+  try { localStorage.setItem("ktx-theme", v); } catch {}
+  if (v) document.documentElement.dataset.theme = v; else delete document.documentElement.dataset.theme;
+}
+setTheme(getTheme());
+
+/* ---------- backup / restore (tags only) ---------- */
+function backup(){
+  const data = {app: "ktx-dwg", ver: 1, at: new Date().toISOString(),
+    files: FILES.map(f => ({hash: f.hash, name: f.name, memo: f.memo || "", pages: f.pages})),
+    tags: TAGS.map(t => ({hash: fileById(t.fileId)?.hash, page: t.page, label: t.label, note: t.note || ""}))};
+  const name = "KTX도면_태그백업_" + new Date().toISOString().slice(0, 10) + ".json";
+  const text = JSON.stringify(data, null, 1);
+  if (window.AndroidBridge && AndroidBridge.saveText){ AndroidBridge.saveText(name, text); return; }
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([text], {type: "application/json"}));
+  a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+$("#restorePicker").onchange = async e => {
+  const file = e.target.files[0]; e.target.value = ""; if (!file) return;
+  try {
+    const data = JSON.parse(await file.text());
+    if (data.app !== "ktx-dwg") throw new Error("형식이 다릅니다");
+    const byHash = new Map(FILES.map(f => [f.hash, f]));
+    let added = 0, skipped = 0;
+    await tx(["files", "tags"], "readwrite", t => {
+      for (const bf of data.files || []){
+        const f = byHash.get(bf.hash);
+        if (f && bf.memo && !f.memo){ f.memo = bf.memo; t.objectStore("files").put(stripFile(f)); }
+      }
+      for (const bt of data.tags || []){
+        const f = byHash.get(bt.hash);
+        if (!f){ skipped++; continue; }
+        if (TAGS.some(x => x.fileId === f.id && x.page === bt.page && x.label === bt.label)) continue;
+        t.objectStore("tags").put({id: uid(), fileId: f.id, page: bt.page, label: bt.label, note: bt.note || ""}); added++;
+      }
+    });
+    await loadAll(); render();
+    toast(`태그 ${added}개 복원${skipped ? ` · 해당 PDF가 없어 ${skipped}개 건너뜀` : ""}`, 3500);
+  } catch (err){ toast("복원 실패: " + err.message, 3500); }
+};
+
+/* ---------- import PDFs ---------- */
+let importing = null;
+function showImport(){
+  const b = $("#importBox"); if (!b || !importing) return;
+  b.innerHTML = `<div class="card"><div>${esc(importing.label)}</div><div class="progress"><div style="width:${Math.round(importing.pct * 100)}%"></div></div></div>`;
+}
+async function sha(buf){
+  if (crypto.subtle){
+    const h = await crypto.subtle.digest("SHA-256", buf);
+    return [...new Uint8Array(h)].slice(0, 16).map(x => x.toString(16).padStart(2, "0")).join("");
+  }
+  let h = 2166136261; const u = new Uint8Array(buf);
+  for (let i = 0; i < u.length; i += 7) h = Math.imul(h ^ u[i], 16777619);
+  return "f" + (h >>> 0).toString(16) + u.length;
+}
+function pageText(content){
+  let s = "";
+  for (const it of content.items){ if ("str" in it){ s += it.str; s += it.hasEOL ? "\n" : " "; } }
+  return s.replace(/[ \t]+/g, " ").trim();
+}
+$("#picker").onchange = async e => {
+  const list = [...e.target.files]; e.target.value = "";
+  if (!list.length) return;
+  setTab("files");
+  const pdfjs = await getPdfjs();
+  let ok = 0;
+  for (let i = 0; i < list.length; i++){
+    const file = list[i];
+    importing = {label: `(${i + 1}/${list.length}) ${file.name} 읽는 중…`, pct: 0}; showImport();
+    try {
+      const buf = await file.arrayBuffer();
+      const hash = await sha(buf);
+      if (FILES.some(f => f.hash === hash)){ toast(`이미 등록된 도면: ${file.name}`); continue; }
+      const doc = await pdfjs.getDocument({data: new Uint8Array(buf.slice(0))}).promise;
+      const id = uid(), pages = [];
+      let textPages = 0;
+      for (let p = 1; p <= doc.numPages; p++){
+        const pg = await doc.getPage(p);
+        const text = pageText(await pg.getTextContent());
+        if (text.replace(/\s/g, "").length > 15) textPages++;
+        pages.push({fileId: id, page: p, text});
+        pg.cleanup();
+        importing.label = `(${i + 1}/${list.length}) ${file.name} · ${p}/${doc.numPages}쪽 글자 추출 중`;
+        importing.pct = p / doc.numPages; if (p % 3 === 0 || p === doc.numPages) showImport();
+      }
+      await doc.destroy();
+      const meta = {id, name: file.name.replace(/\.pdf$/i, ""), memo: "", size: file.size, pages: pages.length, textPages, addedAt: Date.now(), hash};
+      await tx(["files", "blobs", "pages"], "readwrite", t => {
+        t.objectStore("files").put(meta);
+        t.objectStore("blobs").put(new Blob([buf], {type: "application/pdf"}), id);
+        for (const p of pages) t.objectStore("pages").put(p);
+      });
+      ok++;
+    } catch (err){
+      console.error(err);
+      toast(`${file.name}: 읽을 수 없는 PDF입니다 (${err.message})`, 4000);
+    }
+  }
+  importing = null;
+  await loadAll(); render();
+  if (ok) toast(`도면 ${ok}개 등록 완료`);
+  if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+};
+
+/* ---------- viewer ---------- */
+const V = {doc: null, fileId: null, page: 1, zoom: 1, fitScale: 1, query: "", rendering: null, pending: false};
+let docCache = {id: null, doc: null};
+async function openViewer(fileId, page, query){
+  const f = fileById(fileId); if (!f) return;
+  $("#viewer").classList.add("open");
+  history.pushState({viewer: 1}, "");
+  $("#vTitle").textContent = f.name; $("#vTotal").textContent = "/ " + f.pages;
+  V.fileId = fileId; V.page = page; V.query = query || ""; V.zoom = V.query ? 2.5 : 1;  // 검색해서 열면 일치 위치를 확대해서 보여줌
+  if (docCache.id !== fileId){
+    if (docCache.doc) docCache.doc.destroy();
+    docCache = {id: null, doc: null};
+    const pdfjs = await getPdfjs();
+    const blob = await tx(["blobs"], "readonly", t => req(t.objectStore("blobs").get(fileId)));
+    const doc = await pdfjs.getDocument({data: new Uint8Array(await blob.arrayBuffer())}).promise;
+    docCache = {id: fileId, doc};
+  }
+  V.doc = docCache.doc;
+  await renderPage();
+}
+function closeViewer(){ $("#viewer").classList.remove("open"); render(); }
+window.addEventListener("popstate", () => {
+  if ($("#sheet").classList.contains("open")){ closeSheet(true); return; }
+  if ($("#viewer").classList.contains("open")) closeViewer();
+});
+$("#vClose").onclick = () => history.back();
+$("#vPrev").onclick = () => goPage(V.page - 1);
+$("#vNext").onclick = () => goPage(V.page + 1);
+$("#vPage").onchange = e => goPage(parseInt(e.target.value, 10) || V.page);
+$("#vZoomIn").onclick = () => setZoom(V.zoom * 1.4);
+$("#vZoomOut").onclick = () => setZoom(V.zoom / 1.4);
+$("#vFit").onclick = () => setZoom(1);
+function goPage(p){ if (!V.doc) return; p = Math.max(1, Math.min(V.doc.numPages, p)); if (p !== V.page){ V.page = p; renderPage(); } else $("#vPage").value = p; }
+function setZoom(z){
+  const st = $("#stage"), cx = (st.scrollLeft + st.clientWidth / 2) / st.scrollWidth, cy = (st.scrollTop + st.clientHeight / 2) / st.scrollHeight;
+  V.zoom = Math.max(0.5, Math.min(8, z));
+  renderPage().then(() => { st.scrollLeft = cx * st.scrollWidth - st.clientWidth / 2; st.scrollTop = cy * st.scrollHeight - st.clientHeight / 2; });
+}
+
+/* pinch zoom: 손가락 두 개로 확대, 손을 떼면 그 배율로 다시 그림 */
+(() => {
+  const st = $("#stage"), wrap = $("#pagewrap");
+  let d0 = 0, z0 = 1, active = false;
+  const dist = t => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+  st.addEventListener("touchstart", e => { if (e.touches.length === 2){ d0 = dist(e.touches); z0 = V.zoom; active = true; } }, {passive: true});
+  st.addEventListener("touchmove", e => {
+    if (!active || e.touches.length !== 2) return;
+    e.preventDefault();
+    const r = dist(e.touches) / d0;
+    wrap.style.transform = `scale(${Math.max(0.5 / z0, Math.min(8 / z0, r))})`;
+  }, {passive: false});
+  st.addEventListener("touchend", e => {
+    if (!active || e.touches.length) return;
+    active = false;
+    const m = new DOMMatrix(getComputedStyle(wrap).transform);
+    wrap.style.transform = "";
+    setZoom(z0 * (m.a || 1));
+  });
+})();
+
+async function renderPage(){
+  if (!V.doc) return;
+  if (V.rendering){ V.pending = true; try { V.rendering.cancel(); } catch {} return; }
+  const page = await V.doc.getPage(V.page);
+  $("#vPage").value = V.page;
+  const st = $("#stage"), base = page.getViewport({scale: 1});
+  V.fitScale = (st.clientWidth - 20) / base.width;  // 도면은 가로가 길어서 폭 맞춤
+  if (V.fitScale <= 0 || !isFinite(V.fitScale)) V.fitScale = 1;
+  const scale = V.fitScale * V.zoom, vp = page.getViewport({scale});
+  const dpr = Math.min(window.devicePixelRatio || 1, 3);
+  // 너무 큰 캔버스는 모바일에서 실패하므로 픽셀 수 제한
+  let pr = dpr; const maxPx = 16e6;
+  if (vp.width * vp.height * pr * pr > maxPx) pr = Math.sqrt(maxPx / (vp.width * vp.height));
+  const cv = $("#cv"), wrap = $("#pagewrap");
+  const tmp = document.createElement("canvas");
+  tmp.width = Math.floor(vp.width * pr); tmp.height = Math.floor(vp.height * pr);
+  const task = page.render({canvasContext: tmp.getContext("2d"), viewport: vp, transform: pr !== 1 ? [pr, 0, 0, pr, 0, 0] : null});
+  V.rendering = task;
+  try { await task.promise; } catch (err){ if (err && err.name !== "RenderingCancelledException") console.error(err); }
+  V.rendering = null;
+  if (V.pending){ V.pending = false; return renderPage(); }
+  cv.width = tmp.width; cv.height = tmp.height;
+  cv.getContext("2d").drawImage(tmp, 0, 0);
+  cv.style.width = vp.width + "px"; cv.style.height = vp.height + "px";
+  wrap.style.width = vp.width + "px"; wrap.style.height = vp.height + "px";
+  await highlight(page, vp);
+  renderFoot();
+}
+
+async function highlight(page, vp){
+  const hl = $("#hl"); hl.innerHTML = "";
+  const toks = tokens(V.query); if (!toks.length) return;
+  const tc = await page.getTextContent();
+  let first = null;
+  for (const it of tc.items){
+    if (!it.str) continue;
+    const n = norm(it.str);
+    if (!toks.some(tk => n.includes(tk) || (n.length >= 2 && tk.includes(n)))) continue;
+    const [a, b, c, d, e, f] = it.transform;
+    const h = Math.hypot(c, d) || Math.hypot(a, b);
+    const ang = Math.atan2(b, a);
+    const r = vp.convertToViewportRectangle([e, f - h * 0.2, e + it.width * Math.cos(ang) - h * Math.sin(ang) * 0, f + h * 0.95]);
+    let [x1, y1, x2, y2] = r;
+    if (Math.abs(ang) > 0.5){ // 세로 글자
+      const r2 = vp.convertToViewportRectangle([e - h * 0.95, f, e + h * 0.2, f + it.width]); [x1, y1, x2, y2] = r2;
+    }
+    const div = document.createElement("div");
+    div.style.left = Math.min(x1, x2) - 2 + "px"; div.style.top = Math.min(y1, y2) - 2 + "px";
+    div.style.width = Math.abs(x2 - x1) + 4 + "px"; div.style.height = Math.abs(y2 - y1) + 4 + "px";
+    hl.appendChild(div);
+    if (!first) first = div;
+  }
+  if (first && V.zoom > 1.01){
+    const st = $("#stage");
+    st.scrollLeft = first.offsetLeft - st.clientWidth / 2; st.scrollTop = first.offsetTop - st.clientHeight / 2;
+  }
+  return first;
+}
+
+function renderFoot(){
+  const tg = tagsOf(V.fileId, V.page);
+  const hits = $("#hl").children.length;
+  $("#vFoot").innerHTML = `<div class="row">
+      <div class="grow chips" style="margin:0">${tg.length ? tg.map(t => `<span class="chip x" data-t="${t.id}" title="${esc(t.note || "")}">🏷 ${esc(t.label)}</span>`).join("") : '<span class="muted">이 페이지에 태그 없음</span>'}</div>
+      <button class="btn sm primary" id="addTag">＋ 태그</button></div>
+    ${V.query ? `<div class="muted" style="margin-top:6px">“${esc(V.query)}” 표시 ${hits}곳${hits && V.zoom <= 1.01 ? " · 확대하면 해당 위치로 이동" : ""}</div>` : ""}`;
+  $("#addTag").onclick = () => tagEditor(null);
+  $("#vFoot").querySelectorAll("[data-t]").forEach(c => c.onclick = () => tagEditor(TAGS.find(t => t.id === c.dataset.t)));
+}
+
+const SUGGEST = ["고장증상: ", "장치: ", "회로: ", "계전기: ", "차단기: ", "커넥터: "];
+function tagEditor(tag){
+  const labels = [...new Set(TAGS.map(t => t.label))].sort((a, b) => a.localeCompare(b, "ko"));
+  openSheet(`<h3 style="margin-top:0">${tag ? "태그 수정" : "이 페이지에 태그 붙이기"}</h3>
+    <div class="muted">${esc(fileById(V.fileId).name)} · ${V.page}쪽</div>
+    <label class="f">태그 (고장 증상, 장치명, 회로번호 등)</label>
+    <input class="t" id="tLabel" list="tagList" value="${esc(tag ? tag.label : "")}" placeholder="예: 팬토그래프 상승불가">
+    <datalist id="tagList">${labels.map(l => `<option value="${esc(l)}">`).join("")}</datalist>
+    <div class="chips">${SUGGEST.map(s => `<span class="chip x" data-s="${esc(s)}">${esc(s.replace(": ", ""))}</span>`).join("")}</div>
+    <label class="f">메모 (점검 순서, 측정값 등 · 검색에 포함)</label>
+    <textarea class="t" id="tNote" rows="3" placeholder="예: K12 접점 → 단자대 X3-14 전압 확인">${esc(tag ? tag.note || "" : "")}</textarea>
+    <div class="row" style="margin-top:16px">${tag ? '<button class="btn danger" id="tDel">삭제</button>' : ""}<span class="grow"></span>
+      <button class="btn" id="tCancel">취소</button><button class="btn primary" id="tSave">저장</button></div>`);
+  $("#sheetPanel").querySelectorAll("[data-s]").forEach(c => c.onclick = () => { const i = $("#tLabel"); if (!i.value.startsWith(c.dataset.s)) i.value = c.dataset.s + i.value; i.focus(); });
+  $("#tCancel").onclick = () => history.back();
+  $("#tSave").onclick = async () => {
+    const label = $("#tLabel").value.trim(); if (!label){ $("#tLabel").focus(); return; }
+    const rec = {id: tag ? tag.id : uid(), fileId: V.fileId, page: V.page, label, note: $("#tNote").value.trim()};
+    await tx(["tags"], "readwrite", t => t.objectStore("tags").put(rec));
+    await loadAll(); history.back(); renderFoot(); toast("태그를 저장했습니다");
+  };
+  if (tag) $("#tDel").onclick = async () => {
+    await tx(["tags"], "readwrite", t => t.objectStore("tags").delete(tag.id));
+    await loadAll(); history.back(); renderFoot();
+  };
+  setTimeout(() => $("#tLabel").focus(), 50);
+}
+
+function openSheet(html){
+  $("#sheetPanel").innerHTML = html; $("#sheet").classList.add("open");
+  history.pushState({sheet: 1}, "");
+}
+function closeSheet(fromPop){
+  if (!$("#sheet").classList.contains("open")) return;
+  $("#sheet").classList.remove("open");
+  if (!fromPop) history.back();
+}
+$("#sheet").onclick = e => { if (e.target.id === "sheet") history.back(); };
+let rTimer; window.addEventListener("resize", () => { clearTimeout(rTimer); rTimer = setTimeout(() => { if ($("#viewer").classList.contains("open")) renderPage(); }, 250); });
+
+/* ---------- boot ---------- */
+(async () => {
+  try {
+    db = await openDB();
+    await loadAll();
+  } catch (err){
+    $("#tab-search").innerHTML = `<div class="empty">저장공간을 열 수 없습니다.<br><span class="muted">${esc(err.message)}<br>시크릿 모드에서는 사용할 수 없어요.</span></div>`;
+    return;
+  }
+  render();
+  if ("serviceWorker" in navigator && window.isSecureContext && location.protocol !== "file:" && document.querySelector('link[rel="manifest"]')){
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+  }
+})();
+</script>
+</body>
+</html>

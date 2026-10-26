@@ -1,0 +1,2 @@
+{"name":"KTX 도면 찾기","short_name":"도면찾기","start_url":"./","scope":"./","display":"standalone","background_color":"#f4f6f9","theme_color":"#1f3a5f","lang":"ko",
+ "icons":[{"src":"icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}]}
