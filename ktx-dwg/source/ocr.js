@@ -179,7 +179,9 @@ async function ocrPage(doc, pn, worker, opts, progress){
 /* 조각 겹침, 여러 배율, 여러 번 인식으로 같은 자리를 두 번 읽으면 확신도가 높은 쪽만 남긴다 */
 function mergeWords(old, add){
   const all = old.concat(add).sort((a, b) => b.c - a.c), keep = [];
-  for (const w of all) if (!keep.some(o => overlap(o, w) > 0.5)) keep.push(w);
+  // 같은 글자면 조금만 겹쳐도 하나로, 다른 글자면 거의 같은 자리일 때만 하나로 본다
+  // (확대해서 읽을 때 옆 줄까지 한 덩어리로 읽힌 결과가 제대로 읽은 글자를 지우지 않도록)
+  for (const w of all) if (!keep.some(o => o.t === w.t ? overlap(o, w) > 0.3 : iou(o, w) > 0.6)) keep.push(w);
   return keep;
 }
 /* 스캔 이미지면 원래 해상도, CAD에서 나온 선 도면(글자가 선으로 된 것)이면 긴 변 6000px */
@@ -232,6 +234,11 @@ async function ocrTiles(page, job, worker, opts, tick, passes, found){
     }
   }
   return true;
+}
+function iou(a, b){
+  const ix = Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x));
+  const iy = Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
+  return (ix * iy) / (a.w * a.h + b.w * b.h - ix * iy || 1);
 }
 function overlap(a, b){
   const ix = Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x));
