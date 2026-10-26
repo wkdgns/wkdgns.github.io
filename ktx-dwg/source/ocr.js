@@ -8,7 +8,8 @@ const OCR_MODES = {
   all: {label: "한글 포함 전체 글자", langs: "kor+eng", whitelist: ""}
 };
 // 스캔 해상도 그대로 한 번 읽고, 정밀 모드는 1.7배 확대해서 한 번 더 읽어 작은 글자를 보완한다
-const OCR_QUALITY = {fast: {label: "빠르게 (한 번만 읽음)", scales: [1]}, fine: {label: "정밀하게 (글자 크기에 맞춰 한 번 더 읽음, 약 2배 느림)", scales: [1, 1.7]}};
+const OCR_QUALITY = {fast: {label: "빠르게 (한 번만 읽음)", scales: [1]}, fine: {label: "정밀하게 (글자 크기에 맞춰 한 번 더 읽음, 약 2배 느림)", scales: [1, 1.7]},
+  cross: {label: "교차 인식 (이미 인식한 쪽을 다른 배율·조각 위치로 다시 읽어 놓친 글자 보충)", scales: [1.3]}};
 let OCR = null;  // 진행 중인 작업
 
 function parsePages(str, max){
@@ -123,7 +124,7 @@ async function runOcr(fileId, pages, opts){
       await tx(["pages"], "readwrite", async t => {
         const st = t.objectStore("pages");
         const rec = await req(st.get([fileId, pn]));
-        const words = opts.merge && rec.ocr ? mergeWords(rec.ocr.words, res) : res;
+        const words = opts.merge && rec.ocr ? unionWords(rec.ocr.words, res) : res;
         rec.ocr = {words, text: words.map(w => w.t).join(" "), at: Date.now(), mode: opts.mode, q: opts.q, runs: (opts.merge && rec.ocr ? rec.ocr.runs || 1 : 0) + 1};
         st.put(rec);
       });
@@ -155,8 +156,10 @@ async function ocrPage(doc, pn, worker, opts, progress){
   const src = await pageSource(page, base);
   const passes = opts.rot ? 2 : 1;
   const found = [];
-  const job1 = {scale: Math.min(src.scale, maxScale), vector: src.vector};
-  job1.tiles = tilesFor(page.getViewport({scale: job1.scale}));
+  // 교차 인식: 배율을 바꾸고 조각 경계를 반 칸 밀고 전처리도 바꿔서, 처음과 다른 조건으로 읽는다
+  const cross = opts.q === "cross";
+  const job1 = {scale: Math.min(src.scale * (cross ? 1.3 : 1), maxScale), vector: src.vector, alt: cross};
+  job1.tiles = tilesFor(page.getViewport({scale: job1.scale}), cross ? 900 : 0);
   // 정밀 모드는 두 번째 배율을 아직 모르므로 첫 번째와 같은 양으로 어림잡아 진행률을 보여준다
   let total = job1.tiles.length * passes * (opts.q === "fine" ? 2 : 1), k = 0;
   const tick = () => progress(Math.min(++k, total), total);
@@ -175,6 +178,16 @@ async function ocrPage(doc, pn, worker, opts, progress){
   }
   page.cleanup();
   return mergeWords([], found.map(w => ({t: w.t, c: Math.round(w.c), x: w.x / base.width, y: w.y / base.height, w: w.w / base.width, h: w.h / base.height, ...(w.v ? {v: 1} : {})})));
+}
+/* 따로 돌린 인식 결과 합치기: 예전에 읽은 글자는 그대로 두고, 같은 자리에서 같은 글자를 다시 읽은 것만 빼고 더한다
+   (확신도로 고르면 다른 방식이 자신 있게 잘못 읽은 글자가 맞게 읽은 글자를 지울 수 있다) */
+function unionWords(old, add){
+  const out = old.slice();
+  for (const w of add){
+    const n = norm(w.t);
+    if (!out.some(o => overlap(o, w) > 0.3 && norm(o.t).includes(n))) out.push(w);
+  }
+  return out;
 }
 /* 조각 겹침, 여러 배율, 여러 번 인식으로 같은 자리를 두 번 읽으면 확신도가 높은 쪽만 남긴다 */
 function mergeWords(old, add){
@@ -201,10 +214,10 @@ async function pageSource(page, base){
   } catch (err){ console.warn(err); }
   return {scale: 6000 / Math.max(base.width, base.height), vector: true};
 }
-function tilesFor(vp){
+function tilesFor(vp, shift = 0){
   const W = Math.ceil(vp.width), H = Math.ceil(vp.height);
   const T = 1800, OV = 160;  // 조각 크기와 겹침 (경계에 걸린 글자를 놓치지 않게)
-  const steps = len => { const o = []; for (let v = 0; ; v += T - OV){ o.push(v); if (v + T >= len) break; } return o; };
+  const steps = len => { const o = [0]; for (let v = shift || T - OV; v < len - OV; v += T - OV) o.push(v); return o; };
   const tiles = [];
   for (const y of steps(H)) for (const x of steps(W)) tiles.push({x, y, w: Math.min(T, W - x), h: Math.min(T, H - y)});
   return tiles;
