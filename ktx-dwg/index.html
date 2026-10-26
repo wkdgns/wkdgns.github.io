@@ -62,6 +62,7 @@ mark{background:var(--hit);color:inherit;border-radius:3px;padding:0 1px}
 .progress>div{height:100%;background:var(--accent);width:0}
 label.f{display:block;font-size:14px;color:var(--sub);margin:10px 0 4px}
 input.t,textarea.t,select.t{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg)}
+.lvhead{font-size:13px;font-weight:700;color:var(--sub);margin:14px 2px 6px;letter-spacing:.02em}
 .recent{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 12px}
 /* viewer */
 #viewer{position:fixed;inset:0;z-index:20;background:var(--viewer-bg);display:none;flex-direction:column}
@@ -208,7 +209,7 @@ let FILES = [], PAGES = [], TAGS = [];
 async function loadAll(){
   [FILES, PAGES, TAGS] = await Promise.all([getAll("files"), getAll("pages"), getAll("tags")]);
   FILES.sort((a, b) => a.name.localeCompare(b.name, "ko", {numeric: true}));
-  for (const p of PAGES){ p.norm = norm(p.text); p.onorm = p.ocr ? norm(p.ocr.text) : ""; p.oskel = skel(p.onorm); }
+  for (const p of PAGES){ p.norm = norm(p.text); p.onorm = p.ocr ? norm(p.ocr.text) : ""; p.oskel = skel(p.onorm); p.words = null; }
 }
 const fileById = id => FILES.find(f => f.id === id);
 const tagsOf = (fileId, page) => TAGS.filter(t => t.fileId === fileId && t.page === page);
@@ -250,6 +251,13 @@ function snippet(text, toks){
 }
 
 /* ---------- search ---------- */
+// 쪽 안의 낱말 목록 (정확히 일치 판단용). 쉼표·공백으로 나눈 한 덩어리가 검색어와 똑같으면 "정확히 일치"
+const splitWords = s => (s || "").split(/[\s,;]+/).map(norm).filter(Boolean);
+function pageWords(p){
+  if (!p.words) p.words = new Set([...splitWords(p.text), ...(p.ocr ? p.ocr.words.flatMap(w => splitWords(w.t)) : [])]);
+  return p.words;
+}
+const LEVEL = {exact: 3, part: 2, similar: 1};
 function search(q){
   const toks = tokens(q);
   if (!toks.length) return [];
@@ -269,10 +277,14 @@ function search(q){
     const f = fileById(p.fileId); if (!f) continue;
     const k = p.fileId + "|" + p.page;
     const tt = tagText.get(k) || "", fn = norm(f.name + " " + (f.memo || ""));
-    let ok = true, score = 0;
+    let ok = true, score = 0, level = LEVEL.exact;
     for (const tk of toks){
       const inTag = tt.includes(tk), inBody = p.norm.includes(tk) || ocrHas(p.onorm, p.oskel, tk), inName = fn.includes(tk);
       if (!inTag && !inBody && !inName){ ok = false; break; }
+      // 이 검색어가 얼마나 똑같이 들어 있나: 낱말 하나와 똑같음 > 글자 그대로 일부 > 헷갈리는 글자를 같게 봐야 맞음
+      const tagExact = TAGS.some(t => t.fileId === p.fileId && t.page === p.page && (norm(t.label) === tk || splitWords(t.label).includes(tk)));
+      const lv = pageWords(p).has(tk) || tagExact ? LEVEL.exact : (inTag || inName || p.norm.includes(tk) || p.onorm.includes(tk)) ? LEVEL.part : LEVEL.similar;
+      level = Math.min(level, lv);
       score += (inTag ? 10 : 0) + (inBody ? 3 + Math.min(5, p.norm.split(tk).length - 1) : 0) + (inName ? 1 : 0);
     }
     if (!ok) continue;
@@ -280,8 +292,10 @@ function search(q){
     const onlyName = toks.every(tk => !tt.includes(tk) && !p.norm.includes(tk) && !ocrHas(p.onorm, p.oskel, tk));
     if (onlyName && p.page !== 1) continue;
     add(p.fileId, p.page, score, tt && toks.some(tk => tt.includes(tk)) ? "tag" : onlyName ? "name" : "body");
+    results.get(k).level = onlyName ? LEVEL.part : level;
   }
-  return [...results.values()].sort((a, b) => b.score - a.score || fileById(a.fileId).name.localeCompare(fileById(b.fileId).name, "ko", {numeric: true}) || a.page - b.page);
+  // 정확히 일치하는 쪽을 먼저, 그다음 일부 일치, 마지막에 비슷한 글자
+  return [...results.values()].sort((a, b) => b.level - a.level || b.score - a.score || fileById(a.fileId).name.localeCompare(fileById(b.fileId).name, "ko", {numeric: true}) || a.page - b.page);
 }
 
 /* ---------- UI: tabs ---------- */
@@ -333,9 +347,15 @@ function renderSearch(){
     html += `<div class="empty">검색어를 입력하세요.<br><span class="muted">예: 견인전동기, ATC, 회로번호 3142, 팬토그래프 상승불가<br>여러 단어를 띄어 쓰면 모두 포함된 페이지만 찾아요.</span></div>`;
   } else {
     const rs = search(lastQuery), toks = tokens(lastQuery);
-    html += `<div class="muted" style="margin-bottom:8px">“${esc(lastQuery)}” 결과 ${rs.length}건</div>`;
+    const cnt = lv => rs.filter(r => r.level === lv).length;
+    html += `<div class="muted" style="margin-bottom:8px">“${esc(lastQuery)}” 결과 ${rs.length}건 · 정확히 일치 ${cnt(LEVEL.exact)} · 일부 일치 ${cnt(LEVEL.part)}${cnt(LEVEL.similar) ? ` · 비슷한 글자 ${cnt(LEVEL.similar)}` : ""}</div>`;
+    let prevLevel = null;
     if (!rs.length) html += `<div class="empty">찾는 내용이 없습니다.<br><span class="muted">띄어쓰기를 줄이거나 다른 이름(약어, 영문)으로 검색해 보세요.<br>스캔본 도면은 글자가 없으니 페이지에 태그를 붙여 주세요.</span></div>`;
     for (const r of rs.slice(0, 200)){
+      if (r.level !== prevLevel){
+        html += `<div class="lvhead">${r.level === LEVEL.exact ? "정확히 일치" : r.level === LEVEL.part ? "일부 일치 (검색어가 더 긴 이름의 일부)" : "비슷한 글자 (인식 오차일 수 있음: B/8, O/0, I/1 등)"}</div>`;
+        prevLevel = r.level;
+      }
       const f = fileById(r.fileId), p = PAGES.find(x => x.fileId === r.fileId && x.page === r.page);
       const tg = tagsOf(r.fileId, r.page);
       html += `<div class="card result" data-f="${r.fileId}" data-p="${r.page}">
