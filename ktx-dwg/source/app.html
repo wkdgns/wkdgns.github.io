@@ -62,6 +62,7 @@ mark{background:var(--hit);color:inherit;border-radius:3px;padding:0 1px}
 .progress>div{height:100%;background:var(--accent);width:0}
 label.f{display:block;font-size:14px;color:var(--sub);margin:10px 0 4px}
 input.t,textarea.t,select.t{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg)}
+.lg-ex{color:#1e6eff}.lg-pt{color:#f0b400}
 .lvhead{font-size:13px;font-weight:700;color:var(--sub);margin:14px 2px 6px;letter-spacing:.02em}
 .recent{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 12px}
 /* viewer */
@@ -78,7 +79,8 @@ input.t,textarea.t,select.t{width:100%;padding:10px 12px;border:1px solid var(--
 #pagewrap canvas{display:block}
 #hl{position:absolute;inset:0;pointer-events:none}
 #hl div{position:absolute;background:rgba(255,200,0,.42);outline:2px solid rgba(230,120,0,.9);border-radius:2px}
-#hl div.ocrbox{background:rgba(40,120,255,.10);outline:1px solid rgba(40,120,255,.75)}
+#hl div.exact{background:rgba(30,110,255,.28);outline:3px solid rgba(20,90,230,.95)}
+#hl div.ocrbox{background:rgba(120,120,120,.08);outline:1px dashed rgba(90,90,90,.8)}
 .ocrbar{position:fixed;left:0;right:0;bottom:0;z-index:40;background:var(--card);border-top:1px solid var(--line);padding:10px max(16px,env(safe-area-inset-left,0px)) calc(10px + env(safe-area-inset-bottom,0px));box-shadow:0 -4px 16px rgba(0,0,0,.15)}
 .ocrbar .in{max-width:900px;margin:0 auto}
 #blackout{position:fixed;inset:0;z-index:60;background:#000;color:#555;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:24px;text-align:center;font-size:14px}
@@ -693,7 +695,10 @@ async function renderPage(){
 async function highlight(page, vp){
   const hl = $("#hl"); hl.innerHTML = "";
   const toks = tokens(V.query);
-  let first = null;
+  // 정확히 일치(파란 박스)는 일부 일치(노란 박스)보다 앞에 둬서 처음 이동하는 곳·"다음 위치" 순서도 정확히 일치부터
+  const exact = [], part = [];
+  const isExact = str => { const ws = splitWords(str); return toks.some(tk => ws.includes(tk)); };
+  const place = (div, ex) => { div.className = ex ? "hit exact" : "hit"; (ex ? exact : part).push(div); };
   const pg = PAGES.find(x => x.fileId === V.fileId && x.page === V.page);
   if (pg && pg.ocr && (toks.length || V.showOcr)){
     for (const w of pg.ocr.words){
@@ -705,11 +710,16 @@ async function highlight(page, vp){
       div.style.left = w.x * vp.width - 2 + "px"; div.style.top = w.y * vp.height - 2 + "px";
       div.style.width = w.w * vp.width + 4 + "px"; div.style.height = w.h * vp.height + 4 + "px";
       if (!hit){ div.className = "ocrbox"; div.title = w.t; div.dataset.t = w.t; hl.appendChild(div); continue; }
-      div.className = "hit"; hl.appendChild(div);
-      if (!first) first = div;
+      place(div, isExact(w.t));
     }
   }
-  if (!toks.length) return first;
+  const finish = () => {
+    for (const d of exact.concat(part)) hl.appendChild(d);
+    const first = exact[0] || part[0] || null;
+    if (first && V.zoom > 1.01) scrollToHit(first);
+    return first;
+  };
+  if (!toks.length) return finish();
   const tc = await page.getTextContent();
   for (const it of tc.items){
     if (!it.str) continue;
@@ -726,16 +736,14 @@ async function highlight(page, vp){
     const div = document.createElement("div");
     div.style.left = Math.min(x1, x2) - 2 + "px"; div.style.top = Math.min(y1, y2) - 2 + "px";
     div.style.width = Math.abs(x2 - x1) + 4 + "px"; div.style.height = Math.abs(y2 - y1) + 4 + "px";
-    div.className = "hit"; hl.appendChild(div);
-    if (!first) first = div;
+    place(div, isExact(it.str));
   }
-  if (first && V.zoom > 1.01) scrollToHit(first);
-  return first;
+  return finish();
 }
 
 function renderFoot(){
   const tg = tagsOf(V.fileId, V.page);
-  const hits = document.querySelectorAll("#hl .hit").length;
+  const hits = document.querySelectorAll("#hl .hit").length, exactHits = document.querySelectorAll("#hl .hit.exact").length;
   const pg = PAGES.find(x => x.fileId === V.fileId && x.page === V.page);
   $("#vFoot").innerHTML = `<div class="row">
       <div class="grow chips" style="margin:0">${tg.length ? tg.map(t => `<span class="chip x" data-t="${t.id}" title="${esc(t.note || "")}">🏷 ${esc(t.label)}</span>`).join("") : '<span class="muted">이 페이지에 태그 없음</span>'}</div>
@@ -743,9 +751,9 @@ function renderFoot(){
     <div class="row" style="margin-top:6px">
       <button class="btn sm" id="ocrPage">${pg && pg.ocr ? "이 쪽 다시 인식" : "이 쪽 글자 인식"}</button>
       ${pg && pg.ocr ? `<label class="muted row" style="gap:4px"><input type="checkbox" id="showOcr" ${V.showOcr ? "checked" : ""}> 인식된 글자 ${pg.ocr.words.length}개 표시</label>` : ""}
-      ${pg && pg.ocr && V.showOcr ? '<span class="muted">파란 박스를 누르면 읽은 글자가 보여요</span>' : ""}
+      ${pg && pg.ocr && V.showOcr ? '<span class="muted">회색 점선 박스를 누르면 읽은 글자가 보여요</span>' : ""}
     </div>
-    ${V.query ? `<div class="muted" style="margin-top:6px">“${esc(V.query)}” 이 쪽에 ${hits}곳${hits && V.zoom <= 1.01 ? " · 확대하면 해당 위치로 이동" : ""}</div>
+    ${V.query ? `<div class="muted" style="margin-top:6px">“${esc(V.query)}” 이 쪽에 ${hits}곳${hits ? ` (<span class="lg-ex">■</span> 정확히 일치 ${exactHits} · <span class="lg-pt">■</span> 일부 일치 ${hits - exactHits})` : ""}${hits && V.zoom <= 1.01 ? " · 확대하면 해당 위치로 이동" : ""}</div>
       ${(V.findPages || []).length > 1 ? `<div class="chips"><span class="muted">이 도면에서 나오는 쪽</span> ${V.findPages.map(p => `<span class="chip x" data-gp="${p}">${p === V.page ? "▶ " : ""}${p}쪽</span>`).join("")}</div>` : ""}` : ""}`;
   $("#vNextHit").hidden = !V.query || (hits <= 1 && (V.findPages || []).length <= 1);
   $("#vFoot").querySelectorAll("[data-gp]").forEach(c => c.onclick = () => { V.hitIdx = 0; goPage(+c.dataset.gp); });
