@@ -74,6 +74,11 @@ input.t,textarea.t,select.t{width:100%;padding:10px 12px;border:1px solid var(--
 #pagewrap canvas{display:block}
 #hl{position:absolute;inset:0;pointer-events:none}
 #hl div{position:absolute;background:rgba(255,200,0,.42);outline:2px solid rgba(230,120,0,.9);border-radius:2px}
+#hl div.ocrbox{background:rgba(40,120,255,.10);outline:1px solid rgba(40,120,255,.75)}
+.ocrbar{position:fixed;left:0;right:0;bottom:0;z-index:40;background:var(--card);border-top:1px solid var(--line);padding:10px max(16px,env(safe-area-inset-left,0px)) calc(10px + env(safe-area-inset-bottom,0px));box-shadow:0 -4px 16px rgba(0,0,0,.15)}
+.ocrbar .in{max-width:900px;margin:0 auto}
+.opt{display:flex;gap:8px;align-items:flex-start;padding:8px 0;cursor:pointer}
+.opt input{margin-top:4px}
 .vfoot{background:var(--card);border-top:1px solid var(--line);padding:8px 10px;max-height:40vh;overflow:auto}
 .sheet{position:fixed;inset:0;z-index:30;background:rgba(0,0,0,.45);display:none;align-items:flex-end;justify-content:center}
 .sheet.open{display:flex}
@@ -126,6 +131,7 @@ input.t,textarea.t,select.t{width:100%;padding:10px 12px;border:1px solid var(--
 
 <div class="sheet" id="sheet"><div class="panel" id="sheetPanel"></div></div>
 <div class="toast" id="toast"></div>
+<div class="ocrbar" id="ocrbar" hidden><div class="in"><div class="row"><div class="grow" id="ocrMsg"></div><button class="btn sm danger" id="ocrStop">중지</button></div><div class="progress"><div id="ocrProg"></div></div></div></div>
 
 <!--PDFJS-->
 <script>
@@ -168,7 +174,7 @@ let FILES = [], PAGES = [], TAGS = [];
 async function loadAll(){
   [FILES, PAGES, TAGS] = await Promise.all([getAll("files"), getAll("pages"), getAll("tags")]);
   FILES.sort((a, b) => a.name.localeCompare(b.name, "ko", {numeric: true}));
-  for (const p of PAGES) p.norm = norm(p.text);
+  for (const p of PAGES){ p.norm = norm(p.text); p.onorm = p.ocr ? norm(p.ocr.text) : ""; }
 }
 const fileById = id => FILES.find(f => f.id === id);
 const tagsOf = (fileId, page) => TAGS.filter(t => t.fileId === fileId && t.page === page);
@@ -228,13 +234,13 @@ function search(q){
     const tt = tagText.get(k) || "", fn = norm(f.name + " " + (f.memo || ""));
     let ok = true, score = 0;
     for (const tk of toks){
-      const inTag = tt.includes(tk), inBody = p.norm.includes(tk), inName = fn.includes(tk);
+      const inTag = tt.includes(tk), inBody = p.norm.includes(tk) || (p.onorm && p.onorm.includes(tk)), inName = fn.includes(tk);
       if (!inTag && !inBody && !inName){ ok = false; break; }
       score += (inTag ? 10 : 0) + (inBody ? 3 + Math.min(5, p.norm.split(tk).length - 1) : 0) + (inName ? 1 : 0);
     }
     if (!ok) continue;
     // 파일명만 일치하는 경우 모든 페이지가 뜨지 않게, 첫 페이지로만
-    const onlyName = toks.every(tk => !tt.includes(tk) && !p.norm.includes(tk));
+    const onlyName = toks.every(tk => !tt.includes(tk) && !p.norm.includes(tk) && !(p.onorm && p.onorm.includes(tk)));
     if (onlyName && p.page !== 1) continue;
     add(p.fileId, p.page, score, tt && toks.some(tk => tt.includes(tk)) ? "tag" : onlyName ? "name" : "body");
   }
@@ -298,7 +304,7 @@ function renderSearch(){
       html += `<div class="card result" data-f="${r.fileId}" data-p="${r.page}">
         <div class="t"><span class="fname">${esc(f.name)}</span><span class="pg">${r.page}쪽</span>${r.src.has("tag") ? '<span class="chip">태그 일치</span>' : ""}</div>
         ${tg.length ? `<div class="chips">${tg.map(t => `<span class="chip">${esc(t.label)}</span>`).join("")}</div>` : ""}
-        ${p && p.text ? `<div class="snip">${snippet(p.text, toks)}</div>` : ""}
+        ${p && p.text && toks.some(tk => p.norm.includes(tk)) ? `<div class="snip">${snippet(p.text, toks)}</div>` : p && p.ocr && toks.some(tk => p.onorm.includes(tk)) ? `<div class="snip"><span class="chip">글자 인식</span> ${snippet(p.ocr.text, toks)}</div>` : p && p.text ? `<div class="snip">${snippet(p.text, toks)}</div>` : ""}
       </div>`;
     }
     if (rs.length > 200) html += `<div class="muted">상위 200건만 표시합니다. 검색어를 더 구체적으로 입력해 보세요.</div>`;
@@ -332,14 +338,16 @@ function renderFiles(){
     const tc = TAGS.filter(t => t.fileId === f.id).length;
     html += `<div class="card"><div class="row"><div class="grow"><div class="fname" style="font-weight:700;word-break:break-all">${esc(f.name)}</div>
       <div class="muted">${f.pages}쪽 · ${fmtSize(f.size)} · 태그 ${tc}개${f.memo ? " · " + esc(f.memo) : ""}</div></div>
-      <button class="btn sm" data-open="${f.id}">열기</button><button class="btn sm" data-edit="${f.id}">편집</button></div>
-      ${f.textPages < f.pages * 0.5 ? `<div class="warn">글자가 거의 없는 도면입니다(스캔본일 가능성). 본문 검색이 안 되니 페이지에 태그를 붙여 주세요. (글자 있는 쪽 ${f.textPages}/${f.pages})</div>` : ""}
+      <button class="btn sm" data-open="${f.id}">열기</button><button class="btn sm" data-ocr="${f.id}">글자 인식</button><button class="btn sm" data-edit="${f.id}">편집</button></div>
+      ${ocrCount(f.id) ? `<div class="muted" style="margin-top:4px">글자 인식 완료 ${ocrCount(f.id)}/${f.pages}쪽</div>` : ""}
+      ${f.textPages < f.pages * 0.5 && ocrCount(f.id) < f.pages ? `<div class="warn">스캔본 도면입니다 (글자 있는 쪽 ${f.textPages}/${f.pages}). <b>글자 인식</b>을 누르고 필요한 쪽을 골라 선번호·계전기 번호를 읽어 두면 검색할 수 있어요.</div>` : ""}
     </div>`;
   }
   el.innerHTML = html;
   $("#addBtn").onclick = () => $("#picker").click();
   el.querySelectorAll("[data-open]").forEach(b => b.onclick = () => openViewer(b.dataset.open, 1, ""));
   el.querySelectorAll("[data-edit]").forEach(b => b.onclick = () => editFile(b.dataset.edit));
+  el.querySelectorAll("[data-ocr]").forEach(b => b.onclick = () => ocrDialog(b.dataset.ocr));
   if (importing) showImport();
 }
 
@@ -608,9 +616,24 @@ async function renderPage(){
 
 async function highlight(page, vp){
   const hl = $("#hl"); hl.innerHTML = "";
-  const toks = tokens(V.query); if (!toks.length) return;
-  const tc = await page.getTextContent();
+  const toks = tokens(V.query);
   let first = null;
+  const pg = PAGES.find(x => x.fileId === V.fileId && x.page === V.page);
+  if (pg && pg.ocr && (toks.length || V.showOcr)){
+    for (const w of pg.ocr.words){
+      const n = norm(w.t);
+      const hit = toks.length && toks.some(tk => n.includes(tk) || (n.length >= 2 && tk.includes(n)));
+      if (!hit && !V.showOcr) continue;
+      const div = document.createElement("div");
+      div.style.left = w.x * vp.width - 2 + "px"; div.style.top = w.y * vp.height - 2 + "px";
+      div.style.width = w.w * vp.width + 4 + "px"; div.style.height = w.h * vp.height + 4 + "px";
+      if (!hit){ div.className = "ocrbox"; div.title = w.t; div.dataset.t = w.t; hl.appendChild(div); continue; }
+      div.className = "hit"; hl.appendChild(div);
+      if (!first) first = div;
+    }
+  }
+  if (!toks.length) return first;
+  const tc = await page.getTextContent();
   for (const it of tc.items){
     if (!it.str) continue;
     const n = norm(it.str);
@@ -626,7 +649,7 @@ async function highlight(page, vp){
     const div = document.createElement("div");
     div.style.left = Math.min(x1, x2) - 2 + "px"; div.style.top = Math.min(y1, y2) - 2 + "px";
     div.style.width = Math.abs(x2 - x1) + 4 + "px"; div.style.height = Math.abs(y2 - y1) + 4 + "px";
-    hl.appendChild(div);
+    div.className = "hit"; hl.appendChild(div);
     if (!first) first = div;
   }
   if (first && V.zoom > 1.01){
@@ -638,12 +661,19 @@ async function highlight(page, vp){
 
 function renderFoot(){
   const tg = tagsOf(V.fileId, V.page);
-  const hits = $("#hl").children.length;
+  const hits = document.querySelectorAll("#hl .hit").length;
+  const pg = PAGES.find(x => x.fileId === V.fileId && x.page === V.page);
   $("#vFoot").innerHTML = `<div class="row">
       <div class="grow chips" style="margin:0">${tg.length ? tg.map(t => `<span class="chip x" data-t="${t.id}" title="${esc(t.note || "")}">🏷 ${esc(t.label)}</span>`).join("") : '<span class="muted">이 페이지에 태그 없음</span>'}</div>
       <button class="btn sm primary" id="addTag">＋ 태그</button></div>
+    <div class="row" style="margin-top:6px">
+      <button class="btn sm" id="ocrPage">${pg && pg.ocr ? "이 쪽 다시 인식" : "이 쪽 글자 인식"}</button>
+      ${pg && pg.ocr ? `<label class="muted row" style="gap:4px"><input type="checkbox" id="showOcr" ${V.showOcr ? "checked" : ""}> 인식된 글자 ${pg.ocr.words.length}개 표시</label>` : ""}
+    </div>
     ${V.query ? `<div class="muted" style="margin-top:6px">“${esc(V.query)}” 표시 ${hits}곳${hits && V.zoom <= 1.01 ? " · 확대하면 해당 위치로 이동" : ""}</div>` : ""}`;
   $("#addTag").onclick = () => tagEditor(null);
+  $("#ocrPage").onclick = () => ocrDialog(V.fileId, String(V.page));
+  if ($("#showOcr")) $("#showOcr").onchange = e => { V.showOcr = e.target.checked; renderPage(); };
   $("#vFoot").querySelectorAll("[data-t]").forEach(c => c.onclick = () => tagEditor(TAGS.find(t => t.id === c.dataset.t)));
 }
 
@@ -686,6 +716,8 @@ function closeSheet(fromPop){
 }
 $("#sheet").onclick = e => { if (e.target.id === "sheet") history.back(); };
 let rTimer; window.addEventListener("resize", () => { clearTimeout(rTimer); rTimer = setTimeout(() => { if ($("#viewer").classList.contains("open")) renderPage(); }, 250); });
+
+/*OCR_MODULE*/
 
 /* ---------- boot ---------- */
 (async () => {

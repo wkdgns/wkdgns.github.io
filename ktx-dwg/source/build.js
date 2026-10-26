@@ -23,12 +23,28 @@ async function getPdfjs(){
     }
   }
   const gd = lib.getDocument;
-  _pdfjs = {getDocument: src => gd({...src, CMapReaderFactory: KRCMapFactory, cMapUrl: "kr/", cMapPacked: true, useWorkerFetch: false, isEvalSupported: false})};
+  _pdfjs = {OPS: lib.OPS, getDocument: src => gd({...src, CMapReaderFactory: KRCMapFactory, cMapUrl: "kr/", cMapPacked: true, useWorkerFetch: false, isEvalSupported: false})};
   return _pdfjs;
 }
 </script>`;
-const src = fs.readFileSync("src/app.html", "utf8").replace("<!--PDFJS-->", () => loader);
+const ocr = fs.readFileSync("src/ocr.js", "utf8");
+const src = fs.readFileSync("src/app.html", "utf8").replace("<!--PDFJS-->", () => loader).replace("/*OCR_MODULE*/", () => ocr);
 fs.mkdirSync("dist/pwa", {recursive: true});
 fs.writeFileSync("dist/KTX도면찾기.html", src.replace("<!--MANIFEST-->", ""));
 fs.writeFileSync("dist/pwa/index.html", src.replace("<!--MANIFEST-->", '<link rel="manifest" href="manifest.webmanifest"><link rel="icon" href="icon.svg">'));
+// 글자 인식 엔진과 학습 데이터 (앱과 함께 기기에 캐시됨)
+fs.mkdirSync("dist/pwa/ocr", {recursive: true});
+const ocrFiles = {
+  "tesseract.min.js": "node_modules/tesseract.js/dist/tesseract.min.js",
+  "worker.min.js": "node_modules/tesseract.js/dist/worker.min.js",
+  "tesseract-core-lstm.wasm.js": "node_modules/tesseract.js-core/tesseract-core-lstm.wasm.js",
+  "tesseract-core-simd-lstm.wasm.js": "node_modules/tesseract.js-core/tesseract-core-simd-lstm.wasm.js",
+  "eng.traineddata.gz": "node_modules/@tesseract.js-data/eng/4.0.0_best_int/eng.traineddata.gz",
+  "kor.traineddata.gz": "node_modules/@tesseract.js-data/kor/4.0.0_best_int/kor.traineddata.gz"
+};
+for (const [to, from] of Object.entries(ocrFiles)) fs.copyFileSync(from, "dist/pwa/ocr/" + to);
+const ver = require("crypto").createHash("sha1").update(src).digest("hex").slice(0, 8);
+fs.writeFileSync("dist/pwa/sw.js", fs.readFileSync("src/sw.js", "utf8").replace("__VER__", ver)
+  .replace("__FILES__", JSON.stringify(["./", "./index.html", "./manifest.webmanifest", "./icon.svg", ...Object.keys(ocrFiles).map(f => "./ocr/" + f)])));
+for (const f of ["manifest.webmanifest", "icon.svg"]) fs.copyFileSync("src/" + f, "dist/pwa/" + f);
 console.log("ok", (fs.statSync("dist/KTX도면찾기.html").size / 1e6).toFixed(2) + "MB");
