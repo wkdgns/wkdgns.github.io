@@ -764,11 +764,13 @@ async function highlight(page, vp){
 }
 
 /* ---------- 도면 연결: "490.8B" = 490번 도면의 8열 B행 칸 ---------- */
-const REF_RE = /^(\d{1,4})\.(\d{1,2})([A-Z8])$/;
+// 글자 인식이 옆 글자와 붙여 읽거나("12B57NO122.4E") 앞뒤에 잡글자를 붙이는 일이 많아서, 낱말 안 어디에 있든 찾는다.
+// 행 글자 B를 8로 읽는 경우도 많은데, 8 뒤에 숫자가 이어지면 다른 번호의 일부로 본다
+const REF_RE = /(?<![\d.])(\d{2,4})\.(1[0-2]|[1-9])(?:([A-L])|(8)(?!\d))/;
 function parseRef(s){
-  const m = (s || "").toUpperCase().replace(/^[^0-9]+|[^0-9A-Z]+$/g, "").match(REF_RE);
-  if (!m || +m[2] < 1 || +m[2] > 30) return null;
-  const row = m[3] === "8" ? "B" : m[3];  // 글자 인식이 B를 8로 읽는 경우가 많다
+  const m = (s || "").toUpperCase().match(REF_RE);
+  if (!m) return null;
+  const row = m[3] || "B";
   return {sheet: +m[1], col: +m[2], row, label: `${+m[1]}.${+m[2]}${row}`};
 }
 /* 그 쪽에 있는 연결 표시와 화면 위치 */
@@ -939,9 +941,11 @@ async function goBackRef(){
   const st = $("#stage"); st.scrollLeft = b.sx * st.scrollWidth; st.scrollTop = b.sy * st.scrollHeight;
 }
 /* 연결 표시 상자와, 이동해 온 칸 표시 */
+// 연결 표시 켜기·끄기 (기기에 기억)
+const refsOn = () => { try { return localStorage.getItem("ktx-refs") !== "0"; } catch { return true; } };
 async function drawRefs(page, vp){
   const hl = $("#hl");
-  V.refs = await pageRefs(page, vp);
+  V.refs = refsOn() ? await pageRefs(page, vp) : [];
   for (const r of V.refs){
     const div = document.createElement("div");
     div.className = "xref"; div.dataset.ref = r.label;
@@ -968,6 +972,8 @@ function refFoot(){
   let html = "";
   if (b) html += `<div class="row" style="margin-top:6px"><button class="btn sm" id="refBack">← ${esc(b.from)} ${b.page}쪽으로 돌아가기</button>
     ${here ? `<span class="muted">${esc(z.label)} ${z.found ? "칸을 보라색 점선으로 표시했어요" : "칸 위치를 못 찾아서 도면만 열었어요"}</span>` : ""}</div>`;
+  html += `<div class="row" style="margin-top:6px"><label class="muted row" style="gap:4px"><input type="checkbox" id="refsOn" ${refsOn() ? "checked" : ""}> 다른 도면 연결 표시 (눌러서 이동)</label>
+    ${refsOn() && !labels.length ? '<span class="muted">이 쪽에서 찾은 연결 표시 없음</span>' : ""}</div>`;
   if (labels.length) html += `<div class="chips"><span class="muted">다른 도면으로 연결</span> ${labels.map(l => `<span class="chip x ref${findSheet(parseRef(l).sheet) ? "" : " none"}" data-ref="${l}">${l}</span>`).join("")}</div>`;
   return html;
 }
@@ -991,6 +997,7 @@ function renderFoot(){
   $("#addTag").onclick = () => tagEditor(null);
   $("#vFoot").querySelectorAll("[data-ref]").forEach(c => c.onclick = () => goRef(parseRef(c.dataset.ref)));
   if ($("#refBack")) $("#refBack").onclick = () => history.back();
+  $("#refsOn").onchange = e => { try { localStorage.setItem("ktx-refs", e.target.checked ? "1" : "0"); } catch {} renderPage(); };
   $("#ocrPage").onclick = () => ocrDialog(V.fileId, String(V.page));
   if ($("#showOcr")) $("#showOcr").onchange = e => { V.showOcr = e.target.checked; renderPage(); };
   $("#vFoot").querySelectorAll("[data-t]").forEach(c => c.onclick = () => tagEditor(TAGS.find(t => t.id === c.dataset.t)));

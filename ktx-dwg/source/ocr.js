@@ -5,7 +5,9 @@ const ocrCount = fileId => PAGES.filter(p => p.fileId === fileId && p.ocr).lengt
 const OCR_MODES = {
   wire: {label: "선번호·계전기 번호만 (영문 대문자·숫자)", langs: "eng",
     whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-/._()+:#,"},
-  all: {label: "한글 포함 전체 글자", langs: "kor+eng", whitelist: ""}
+  all: {label: "한글 포함 전체 글자", langs: "kor+eng", whitelist: ""},
+  // 다른 도면 연결 표시(490.8B)만 노린 방식: 표시에 닿거나 지나가는 긴 선을 지우고, 숫자·점·칸 글자만 읽는다
+  ref: {label: "다른 도면 연결 표시만 (490.8B 같은 것)", langs: "eng", whitelist: "0123456789.ABCDEFGHIJKL"}
 };
 // 스캔 해상도 그대로 한 번 읽고, 정밀 모드는 1.7배 확대해서 한 번 더 읽어 작은 글자를 보완한다
 const OCR_QUALITY = {fast: {label: "빠르게 (한 번만 읽음)", scales: [1]}, fine: {label: "정밀하게 (글자 크기에 맞춰 한 번 더 읽음, 약 2배 느림)", scales: [1, 1.7]},
@@ -233,7 +235,7 @@ async function ocrPage(doc, pn, worker, opts, progress){
   const found = [];
   // 교차 인식: 배율을 바꾸고 조각 경계를 반 칸 밀고 전처리도 바꿔서, 처음과 다른 조건으로 읽는다
   const cross = opts.q === "cross";
-  const job1 = {scale: Math.min(src.scale * (cross ? 1.3 : 1), maxScale), vector: src.vector, alt: cross};
+  const job1 = {scale: Math.min(src.scale * (cross ? 1.3 : 1), maxScale), vector: src.vector, alt: cross, ref: opts.mode === "ref"};
   job1.tiles = tilesFor(page.getViewport({scale: job1.scale}), cross ? 900 : 0);
   // 정밀 모드는 두 번째 배율을 아직 모르므로 첫 번째와 같은 양으로 어림잡아 진행률을 보여준다
   let total = job1.tiles.length * passes * (opts.q === "fine" ? 2 : 1), k = 0;
@@ -246,7 +248,7 @@ async function ocrPage(doc, pn, worker, opts, progress){
     if (med) scale2 = job1.scale * OCR_TARGET_PX / med;
     if (Math.abs(scale2 / job1.scale - 1) < 0.3){ scale2 = job1.scale; alt = true; }  // 크기가 이미 알맞으면 같은 배율에서 처리만 바꿔 한 번 더
     scale2 = Math.max(job1.scale * 0.5, Math.min(scale2, maxScale));
-    const job2 = {scale: scale2, vector: src.vector, alt};
+    const job2 = {scale: scale2, vector: src.vector, alt, ref: opts.mode === "ref"};
     job2.tiles = tilesFor(page.getViewport({scale: scale2}));
     total = k + job2.tiles.length * passes;
     if (!await ocrTiles(page, job2, worker, opts, tick, passes, found)) return null;
@@ -360,6 +362,7 @@ function enhance(ctx, w, h, job){
     }
     g = m;
   }
+  if (job.ref) removeLines(g, w, h);
   const hist = new Uint32Array(256);
   for (let j = 0; j < n; j++) hist[g[j]]++;
   // 하위 1%는 검정, 밝은 쪽 40%는 흰색으로 늘림
@@ -370,6 +373,28 @@ function enhance(ctx, w, h, job){
   const sc = 255 / (hi - lo);
   for (let i = 0, j = 0; j < n; i += 4, j++){ const val = Math.max(0, Math.min(255, (g[j] - lo) * sc)); d[i] = d[i + 1] = d[i + 2] = val; }
   ctx.putImageData(img, 0, 0);
+}
+/* 글자보다 훨씬 긴 가로·세로 선을 흰색으로 지운다. 연결 표시는 배선이나 접점에 붙어 있는 경우가 많아서
+   선이 붙은 채로는 글자 덩어리로 읽히지 않는다 */
+function removeLines(g, w, h){
+  const L = 70, dark = v => v < 140, kill = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++){
+    let s = -1;
+    for (let x = 0; x <= w; x++){
+      const d = x < w && dark(g[y * w + x]);
+      if (d && s < 0) s = x;
+      if (!d && s >= 0){ if (x - s >= L) for (let k = s; k < x; k++) kill[y * w + k] = 1; s = -1; }
+    }
+  }
+  for (let x = 0; x < w; x++){
+    let s = -1;
+    for (let y = 0; y <= h; y++){
+      const d = y < h && dark(g[y * w + x]);
+      if (d && s < 0) s = y;
+      if (!d && s >= 0){ if (y - s >= L) for (let k = s; k < y; k++) kill[k * w + x] = 1; s = -1; }
+    }
+  }
+  for (let i = 0; i < w * h; i++) if (kill[i]) g[i] = 255;
 }
 /* 가로, 세로로 나눠 하는 최솟값 필터 (어두운 선을 r픽셀씩 굵게) */
 function minFilter(src, w, h, r){
