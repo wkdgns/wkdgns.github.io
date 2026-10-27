@@ -63,6 +63,12 @@ mark{background:var(--hit);color:inherit;border-radius:3px;padding:0 1px}
 label.f{display:block;font-size:14px;color:var(--sub);margin:10px 0 4px}
 input.t,textarea.t,select.t{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg)}
 .lg-ex{color:#1e6eff}.lg-pt{color:#f0b400}
+.seg{display:flex;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.seg button{flex:1;padding:10px;border:0;background:var(--card);font-weight:700;color:var(--sub);cursor:pointer}
+.seg button.on{background:var(--accent);color:var(--accent-ink)}
+.pre{white-space:pre-wrap}
+.btn.good{background:#2a9d5c;color:#fff;border-color:#2a9d5c}.btn.bad{background:var(--danger);color:#fff;border-color:var(--danger)}
+.card.step.ok{border-left:5px solid #2a9d5c}.card.step.ng{border-left:5px solid var(--danger)}
 .lvhead{font-size:13px;font-weight:700;color:var(--sub);margin:14px 2px 6px;letter-spacing:.02em}
 .recent{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 12px}
 /* viewer */
@@ -114,6 +120,7 @@ input.t,textarea.t,select.t{width:100%;padding:10px 12px;border:1px solid var(--
     <button data-tab="search" class="on">검색</button>
     <button data-tab="tags">태그</button>
     <button data-tab="files">도면</button>
+    <button data-tab="fault">고장</button>
     <button data-tab="settings">설정</button>
   </nav>
 </header>
@@ -121,6 +128,7 @@ input.t,textarea.t,select.t{width:100%;padding:10px 12px;border:1px solid var(--
   <section id="tab-search"></section>
   <section id="tab-tags" hidden></section>
   <section id="tab-files" hidden></section>
+  <section id="tab-fault" hidden></section>
   <section id="tab-settings" hidden></section>
 </main>
 
@@ -155,19 +163,26 @@ input.t,textarea.t,select.t{width:100%;padding:10px 12px;border:1px solid var(--
 <script>
 "use strict";
 /* ---------- storage (IndexedDB, 이 기기 안에서만) ---------- */
-const DB_NAME = "ktx-dwg", DB_VER = 1;
+const DB_NAME = "ktx-dwg", DB_VER = 2;
 let db;
 function openDB(){
   return new Promise((res, rej) => {
     const r = indexedDB.open(DB_NAME, DB_VER);
-    r.onupgradeneeded = () => {
+    r.onupgradeneeded = e => {
       const d = r.result;
-      d.createObjectStore("files", {keyPath: "id"});        // 메타데이터
-      d.createObjectStore("blobs");                          // PDF 원본 (key = file id)
-      const p = d.createObjectStore("pages", {keyPath: ["fileId", "page"]});
-      p.createIndex("fileId", "fileId");
-      const t = d.createObjectStore("tags", {keyPath: "id"});
-      t.createIndex("fileId", "fileId");
+      if (e.oldVersion < 1){
+        d.createObjectStore("files", {keyPath: "id"});        // 메타데이터
+        d.createObjectStore("blobs");                          // PDF 원본 (key = file id)
+        const p = d.createObjectStore("pages", {keyPath: ["fileId", "page"]});
+        p.createIndex("fileId", "fileId");
+        const t = d.createObjectStore("tags", {keyPath: "id"});
+        t.createIndex("fileId", "fileId");
+      }
+      if (e.oldVersion < 2){
+        d.createObjectStore("cases", {keyPath: "id"});   // 고장 이력
+        d.createObjectStore("checks", {keyPath: "id"});  // 점검 순서 (증상별 단계)
+        d.createObjectStore("runs", {keyPath: "id"});    // 점검 순서를 실제로 해 본 기록
+      }
     };
     r.onsuccess = () => res(r.result);
     r.onerror = () => rej(r.error);
@@ -188,9 +203,9 @@ const getAll = (store) => tx([store], "readonly", t => req(t.objectStore(store).
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
 /* ---------- in-memory index ---------- */
-let FILES = [], PAGES = [], TAGS = [];
+let FILES = [], PAGES = [], TAGS = [], CASES = [], CHECKS = [], RUNS = [];
 async function loadAll(){
-  [FILES, PAGES, TAGS] = await Promise.all([getAll("files"), getAll("pages"), getAll("tags")]);
+  [FILES, PAGES, TAGS, CASES, CHECKS, RUNS] = await Promise.all(["files", "pages", "tags", "cases", "checks", "runs"].map(getAll));
   FILES.sort((a, b) => a.name.localeCompare(b.name, "ko", {numeric: true}));
   for (const p of PAGES){ p.norm = norm(p.text); p.onorm = p.ocr ? norm(p.ocr.text) : ""; p.oskel = skel(p.onorm); p.words = null; }
 }
@@ -287,7 +302,7 @@ let curTab = "search", lastQuery = "";
 function setTab(name){
   curTab = name;
   document.querySelectorAll(".tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === name));
-  for (const s of ["search", "tags", "files", "settings"]) $("#tab-" + s).hidden = s !== name;
+  for (const s of ["search", "tags", "files", "fault", "settings"]) $("#tab-" + s).hidden = s !== name;
   render();
 }
 document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => setTab(b.dataset.tab));
@@ -295,6 +310,7 @@ function render(){
   if (curTab === "search") renderSearch();
   if (curTab === "tags") renderTags();
   if (curTab === "files") renderFiles();
+  if (curTab === "fault") renderFault();
   if (curTab === "settings") renderSettings();
 }
 function toast(msg, ms = 2200){
@@ -330,10 +346,20 @@ function renderSearch(){
     html += `<div class="empty">검색어를 입력하세요.<br><span class="muted">예: 견인전동기, ATC, 회로번호 3142, 팬토그래프 상승불가<br>여러 단어를 띄어 쓰면 모두 포함된 페이지만 찾아요.</span></div>`;
   } else {
     const rs = search(lastQuery), toks = tokens(lastQuery);
+    // 같은 증상의 지난 고장 사례와 점검 순서를 도면보다 먼저 보여준다
+    const pc = findCases(lastQuery), pk = findChecks(lastQuery);
+    if (pc.length || pk.length){
+      html += `<div class="lvhead">지난 고장 사례${pc.length ? ` ${pc.length}건` : ""}${pk.length ? ` · 점검 순서 ${pk.length}개` : ""}</div>`;
+      html += pk.map(c => `<div class="card"><div class="row"><b class="grow">✅ ${esc(c.title)}</b><span class="muted">${c.steps.length}단계</span><button class="btn sm primary" data-start="${c.id}">점검 시작</button></div></div>`).join("");
+      html += pc.slice(0, 3).map(caseCard).join("");
+      if (pc.length > 3) html += `<button class="btn sm" id="moreCases">고장 사례 ${pc.length - 3}건 더 보기</button>`;
+      html += `<div class="lvhead">도면</div>`;
+    }
     const cnt = lv => rs.filter(r => r.level === lv).length;
     html += `<div class="muted" style="margin-bottom:8px">“${esc(lastQuery)}” 결과 ${rs.length}건 · 정확히 일치 ${cnt(LEVEL.exact)} · 일부 일치 ${cnt(LEVEL.part)}${cnt(LEVEL.similar) ? ` · 비슷한 글자 ${cnt(LEVEL.similar)}` : ""}</div>`;
     let prevLevel = null;
-    if (!rs.length) html += `<div class="empty">찾는 내용이 없습니다.<br><span class="muted">띄어쓰기를 줄이거나 다른 이름(약어, 영문)으로 검색해 보세요.<br>스캔본 도면은 글자가 없으니 페이지에 태그를 붙여 주세요.</span></div>`;
+    if (!rs.length && (pc.length || pk.length)) html += `<div class="muted">이 검색어가 들어간 도면은 없어요.</div>`;
+    else if (!rs.length) html += `<div class="empty">찾는 내용이 없습니다.<br><span class="muted">띄어쓰기를 줄이거나 다른 이름(약어, 영문)으로 검색해 보세요.<br>스캔본 도면은 글자가 없으니 페이지에 태그를 붙여 주세요.</span></div>`;
     for (const r of rs.slice(0, 200)){
       if (r.level !== prevLevel){
         html += `<div class="lvhead">${r.level === LEVEL.exact ? "정확히 일치" : r.level === LEVEL.part ? "일부 일치 (검색어가 더 긴 이름의 일부)" : "비슷한 글자 (인식 오차일 수 있음: B/8, O/0, I/1 등)"}</div>`;
@@ -351,7 +377,10 @@ function renderSearch(){
   }
   el.innerHTML = html;
   el.querySelectorAll(".recent .chip").forEach(c => c.onclick = () => { $("#q").value = c.dataset.q; lastQuery = c.dataset.q; pushRecent(lastQuery); renderSearch(); });
-  el.querySelectorAll(".result").forEach(c => c.onclick = () => openViewer(c.dataset.f, +c.dataset.p, lastQuery));
+  el.querySelectorAll(".result[data-f]").forEach(c => c.onclick = () => openViewer(c.dataset.f, +c.dataset.p, lastQuery));
+  bindCases(el);
+  el.querySelectorAll("[data-start]").forEach(b => b.onclick = () => startRun(CHECKS.find(c => c.id === b.dataset.start)));
+  if ($("#moreCases")) $("#moreCases").onclick = () => { FT.q = lastQuery; FT.seg = "cases"; FT.runId = null; setTab("fault"); };
 }
 
 function renderTags(){
@@ -429,12 +458,12 @@ function renderSettings(){
       <div class="row" style="margin-top:8px"><button class="btn sm" id="persistBtn">저장공간 유지 요청</button></div>
       <div class="muted" style="margin-top:6px">브라우저가 공간이 부족할 때 데이터를 지우지 않도록 요청합니다.</div></div>
     <div class="card"><b>백업과 옮기기</b><div class="muted" style="margin-top:6px;line-height:1.6">
-      태그·메모, 원하면 글자 인식 결과까지 파일로 저장합니다 (PDF 원본은 포함되지 않음). 다른 기기에 같은 PDF를 등록한 뒤 복원하면 옮겨져요.
+      태그·메모·고장 기록·점검 순서, 원하면 글자 인식 결과까지 파일로 저장합니다 (PDF 원본은 포함되지 않음). 다른 기기에 같은 PDF를 등록한 뒤 복원하면 옮겨져요.
       PC에서 전체 글자 인식을 돌리고 결과만 탭으로 옮길 때도 이렇게 하면 돼요.</div>
-      <div class="row" style="margin-top:8px"><button class="btn sm" id="bkBtn">태그만 저장</button><button class="btn sm" id="bkOcrBtn">태그 + 인식 결과 저장</button><button class="btn sm" id="rsBtn">백업 복원</button></div></div>
+      <div class="row" style="margin-top:8px"><button class="btn sm" id="bkBtn">태그·고장 기록 저장</button><button class="btn sm" id="bkOcrBtn">태그·고장 기록 + 인식 결과 저장</button><button class="btn sm" id="rsBtn">백업 복원</button></div></div>
     <div class="card"><b>화면</b><div class="row" style="margin-top:8px">
       <select class="t" id="themeSel" style="width:auto"><option value="">시스템 설정 따름</option><option value="light">밝게</option><option value="dark">어둡게</option></select></div></div>
-    <div class="card"><b>모든 데이터 삭제</b><div class="row" style="margin-top:8px"><button class="btn sm danger" id="wipeBtn">도면·태그 전부 삭제</button></div></div>`;
+    <div class="card"><b>모든 데이터 삭제</b><div class="row" style="margin-top:8px"><button class="btn sm danger" id="wipeBtn">도면·태그·고장 기록 전부 삭제</button></div></div>`;
   (async () => {
     let s = "";
     if (navigator.storage && navigator.storage.estimate){
@@ -455,8 +484,9 @@ function renderSettings(){
   $("#themeSel").value = getTheme();
   $("#themeSel").onchange = e => setTheme(e.target.value);
   $("#wipeBtn").onclick = async () => {
-    if (!confirm("등록한 도면과 태그를 모두 삭제합니다. 되돌릴 수 없습니다. 계속할까요?")) return;
-    await tx(["files", "blobs", "pages", "tags"], "readwrite", t => { for (const s of ["files", "blobs", "pages", "tags"]) t.objectStore(s).clear(); });
+    if (!confirm("등록한 도면, 태그, 고장 기록, 점검 순서를 모두 삭제합니다. 되돌릴 수 없습니다. 계속할까요?")) return;
+    const all = ["files", "blobs", "pages", "tags", "cases", "checks", "runs"];
+    await tx(all, "readwrite", t => { for (const s of all) t.objectStore(s).clear(); });
     await loadAll(); render(); toast("모두 삭제했습니다");
   };
 }
@@ -471,10 +501,14 @@ setTheme(getTheme());
 function backup(withOcr){
   const data = {app: "ktx-dwg", ver: 1, at: new Date().toISOString(),
     files: FILES.map(f => ({hash: f.hash, name: f.name, memo: f.memo || "", pages: f.pages})),
-    tags: TAGS.map(t => ({hash: fileById(t.fileId)?.hash, page: t.page, label: t.label, note: t.note || ""}))};
+    tags: TAGS.map(t => ({hash: fileById(t.fileId)?.hash, page: t.page, label: t.label, note: t.note || ""})),
+    // 고장 기록과 점검 순서: 도면 연결은 기기마다 다른 id 대신 PDF 지문(hash)으로 담는다
+    cases: CASES.map(c => ({...c, links: (c.links || []).map(linkOut)})),
+    checks: CHECKS.map(c => ({...c, steps: c.steps.map(st => ({...st, link: st.link && linkOut(st.link)}))})),
+    runs: RUNS};
   // 글자 인식 결과도 담으면 PC에서 인식한 걸 탭으로 옮길 수 있다 (같은 PDF를 양쪽에 등록해 두어야 함)
   if (withOcr) data.ocr = PAGES.filter(p => p.ocr).map(p => ({hash: fileById(p.fileId)?.hash, page: p.page, words: p.ocr.words, mode: p.ocr.mode, q: p.ocr.q}));
-  const name = (withOcr ? "KTX도면_태그+인식결과백업_" : "KTX도면_태그백업_") + new Date().toISOString().slice(0, 10) + ".json";
+  const name = (withOcr ? "KTX도면_태그·고장기록+인식결과백업_" : "KTX도면_태그·고장기록백업_") + new Date().toISOString().slice(0, 10) + ".json";
   const text = JSON.stringify(data, null, 1);
   if (window.AndroidBridge && AndroidBridge.saveText){ AndroidBridge.saveText(name, text); return; }
   const a = document.createElement("a");
@@ -488,8 +522,13 @@ $("#restorePicker").onchange = async e => {
     const data = JSON.parse(await file.text());
     if (data.app !== "ktx-dwg") throw new Error("형식이 다릅니다");
     const byHash = new Map(FILES.map(f => [f.hash, f]));
-    let added = 0, skipped = 0, ocrPages = 0;
-    await tx(["files", "tags", "pages"], "readwrite", async t => {
+    let added = 0, skipped = 0, ocrPages = 0, faults = 0;
+    await tx(["files", "tags", "pages", "cases", "checks", "runs"], "readwrite", async t => {
+      // 고장 기록·점검 순서·점검 기록: 같은 id가 이미 있으면 그대로 둔다 (같은 백업을 두 번 복원해도 겹치지 않게)
+      const linkIn = l => { const f = byHash.get(l.hash); return {fileId: f ? f.id : null, hash: l.hash, name: l.name, page: l.page}; };
+      for (const c of data.cases || []) if (!CASES.some(x => x.id === c.id)){ t.objectStore("cases").put({...c, links: (c.links || []).map(linkIn)}); faults++; }
+      for (const c of data.checks || []) if (!CHECKS.some(x => x.id === c.id)){ t.objectStore("checks").put({...c, steps: c.steps.map(st => ({...st, link: st.link && linkIn(st.link)}))}); faults++; }
+      for (const r of data.runs || []) if (!RUNS.some(x => x.id === r.id)) t.objectStore("runs").put(r);
       for (const bf of data.files || []){
         const f = byHash.get(bf.hash);
         if (f && bf.memo && !f.memo){ f.memo = bf.memo; t.objectStore("files").put(stripFile(f)); }
@@ -511,7 +550,7 @@ $("#restorePicker").onchange = async e => {
       }
     });
     await loadAll(); render();
-    toast(`태그 ${added}개${ocrPages ? ` · 글자 인식 결과 ${ocrPages}쪽` : ""} 복원${skipped ? ` · 해당 PDF가 없어 태그 ${skipped}개 건너뜀` : ""}`, 4000);
+    toast(`태그 ${added}개${faults ? ` · 고장 기록·점검 순서 ${faults}개` : ""}${ocrPages ? ` · 글자 인식 결과 ${ocrPages}쪽` : ""} 복원${skipped ? ` · 해당 PDF가 없어 태그 ${skipped}개 건너뜀` : ""}`, 4000);
   } catch (err){ toast("복원 실패: " + err.message, 3500); }
 };
 
@@ -578,6 +617,225 @@ $("#picker").onchange = async e => {
   if (ok) toast(`도면 ${ok}개 등록 완료`);
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 };
+
+/* ---------- 고장 이력과 점검 순서 (이 기기 안에만 저장) ---------- */
+const FT = {seg: "cases", q: "", runId: null};
+const ymd = t => new Date(t).toLocaleDateString("sv");  // 2026-10-27 형식, 기기 시간대 기준
+/* 도면 연결: 이 기기의 도면 id와 함께 PDF 지문(hash)과 이름을 적어 두어, 백업을 다른 기기에 복원해도 이어지게 한다 */
+const linkFile = l => l && (fileById(l.fileId) || (l.hash && FILES.find(f => f.hash === l.hash)));
+const mkLink = (fileId, page) => { const f = fileById(fileId); return {fileId, hash: f.hash, name: f.name, page}; };
+const linkOut = l => { const f = linkFile(l); return {hash: f ? f.hash : l.hash, name: f ? f.name : l.name, page: l.page}; };
+function linkChip(l, attrs = ""){
+  const f = linkFile(l);
+  return f ? `<span class="chip x" data-lf="${f.id}" data-lp="${l.page}" ${attrs}>📄 ${esc(f.name)} · ${l.page}쪽</span>`
+    : `<span class="chip" style="opacity:.6" title="이 기기에 등록되지 않은 도면" ${attrs}>📄 ${esc(l.name || "없는 도면")} · ${l.page}쪽 (미등록)</span>`;
+}
+const bindLinks = el => el.querySelectorAll("[data-lf]").forEach(c => c.onclick = e => { e.stopPropagation(); openViewer(c.dataset.lf, +c.dataset.lp, ""); });
+/* 도면 쪽 고르기: 파일 목록 + 쪽 번호. 지금(또는 마지막으로) 보던 도면을 먼저 골라 둔다 */
+// l: 이미 연결된 쪽, null이면 연결 없음, 생략하면 지금(또는 마지막으로) 보던 도면
+function pickerHtml(id, l){
+  const cur = l ? linkFile(l)?.id : l === null ? null : V.fileId;
+  return `<select class="t" id="${id}F" style="flex:2;min-width:0"><option value="">도면 연결 안 함</option>${FILES.map(f => `<option value="${f.id}" ${f.id === cur ? "selected" : ""}>${esc(f.name)}</option>`).join("")}</select>
+    <input class="t" id="${id}P" inputmode="numeric" placeholder="쪽" style="width:64px" value="${l ? l.page : cur ? V.page : ""}">`;
+}
+function pickerRead(id){
+  const f = $("#" + id + "F").value; if (!f) return null;
+  const pages = fileById(f).pages, p = Math.max(1, Math.min(pages, parseInt($("#" + id + "P").value, 10) || 1));
+  return mkLink(f, p);
+}
+
+/* 비슷한 지난 사례: 검색어 낱말이 증상에 있으면 2점, 원인·조치·메모·편성에 있으면 1점 */
+function findCases(q, exceptId){
+  const toks = tokens(q); if (!toks.length) return [];
+  return CASES.filter(c => c.id !== exceptId).map(c => {
+    const sym = norm(c.symptom), all = norm([c.symptom, c.cause, c.action, c.memo, c.car].join(" "));
+    return {c, score: toks.reduce((n, tk) => n + (sym.includes(tk) ? 2 : all.includes(tk) ? 1 : 0), 0)};
+  }).filter(x => x.score > 0).sort((a, b) => b.score - a.score || (b.c.date || "").localeCompare(a.c.date || "")).map(x => x.c);
+}
+const findChecks = q => { const toks = tokens(q); return toks.length ? CHECKS.filter(c => toks.some(tk => norm(c.title).includes(tk))) : []; };
+const byDate = (a, b) => (b.date || "").localeCompare(a.date || "") || (b.at || 0) - (a.at || 0);
+function caseCard(c){
+  return `<div class="card result" data-case="${c.id}">
+    <div class="row"><b class="grow">🛠 ${esc(c.symptom || "(증상 없음)")}</b><span class="muted">${esc(c.date || "")}${c.car ? " · " + esc(c.car) : ""}</span></div>
+    ${c.cause ? `<div class="snip pre"><b>원인</b> ${esc(c.cause)}</div>` : ""}${c.action ? `<div class="snip pre"><b>조치</b> ${esc(c.action)}</div>` : ""}
+    ${c.memo ? `<div class="snip pre">${esc(c.memo)}</div>` : ""}
+    ${(c.links || []).length ? `<div class="chips">${c.links.map(l => linkChip(l)).join("")}</div>` : ""}</div>`;
+}
+const bindCases = el => { el.querySelectorAll("[data-case]").forEach(c => c.onclick = () => caseEditor(CASES.find(x => x.id === c.dataset.case))); bindLinks(el); };
+
+function renderFault(){
+  const el = $("#tab-fault");
+  const run = FT.runId && RUNS.find(r => r.id === FT.runId);
+  if (run) return renderRun(el, run);
+  let html = `<div class="seg"><button data-seg="cases" class="${FT.seg === "cases" ? "on" : ""}">고장 이력 ${CASES.length}</button><button data-seg="checks" class="${FT.seg === "checks" ? "on" : ""}">점검 순서 ${CHECKS.length}</button></div>`;
+  if (FT.seg === "cases"){
+    html += `<form class="row" id="caseFind" style="margin:10px 0" autocomplete="off"><input class="t grow" id="caseQ" type="search" placeholder="증상·원인·편성으로 찾기" value="${esc(FT.q)}" enterkeyhint="search"><button class="btn primary" type="button" id="caseNew">＋ 고장 기록</button></form>`;
+    const list = FT.q ? findCases(FT.q) : CASES.slice().sort(byDate);
+    html += list.length ? list.map(caseCard).join("") : `<div class="empty">${FT.q ? "맞는 기록이 없어요." : `아직 고장 기록이 없어요.<br><span class="muted">고장 증상, 원인, 조치와 관련 도면 쪽을 적어 두면<br>같은 증상을 검색할 때 지난 사례가 함께 나와요.<br>도면을 보다가 아래쪽 <b>＋ 고장 기록</b>을 눌러도 돼요.</span>`}</div>`;
+  } else {
+    html += `<div class="row" style="margin:10px 0"><span class="muted grow">증상별 점검 순서를 만들어 두고 현장에서 하나씩 체크해요</span><button class="btn primary" id="checkNew">＋ 점검 순서</button></div>`;
+    const open = RUNS.filter(r => !r.done).sort((a, b) => b.at - a.at);
+    if (open.length) html += `<div class="lvhead">진행 중인 점검</div>` + open.map(r => `<div class="card result" data-run="${r.id}"><b>▶ ${esc(r.title)}</b> <span class="muted">${r.car ? esc(r.car) + " · " : ""}${ymd(r.at)} · ${r.steps.filter(s => r.res[s.id]?.ok != null).length}/${r.steps.length}단계</span></div>`).join("") + `<div class="lvhead">점검 순서</div>`;
+    const cs = CHECKS.slice().sort((a, b) => a.title.localeCompare(b.title, "ko", {numeric: true}));
+    html += cs.map(c => {
+      const done = RUNS.filter(r => r.checkId === c.id && r.done).sort((a, b) => b.at - a.at);
+      return `<div class="card"><div class="row"><div class="grow"><b>${esc(c.title)}</b><div class="muted">${c.steps.length}단계${done.length ? ` · 점검 ${done.length}번` : ""}</div></div>
+        <button class="btn sm primary" data-start="${c.id}">점검 시작</button><button class="btn sm" data-cedit="${c.id}">편집</button></div>
+        ${done.length ? `<div class="chips"><span class="muted">지난 점검</span> ${done.slice(0, 6).map(r => `<span class="chip x" data-run="${r.id}">${ymd(r.at)}${r.car ? " " + esc(r.car) : ""}${r.steps.some(s => r.res[s.id]?.ok === false) ? " ⚠" : ""}</span>`).join("")}</div>` : ""}</div>`;
+    }).join("") || `<div class="empty">아직 점검 순서가 없어요.<br><span class="muted">예: “팬토 상승 불가” → 1. 제어전원 확인 → 2. R-PT-01 동작 확인 → 3. 12B47 전압 측정<br>단계마다 기준값과 도면 쪽을 넣어 둘 수 있어요.</span></div>`;
+  }
+  el.innerHTML = html;
+  el.querySelectorAll("[data-seg]").forEach(b => b.onclick = () => { FT.seg = b.dataset.seg; renderFault(); });
+  if ($("#caseNew")){
+    $("#caseNew").onclick = () => caseEditor(null, FT.q ? {symptom: FT.q} : {});
+    $("#caseFind").onsubmit = e => { e.preventDefault(); FT.q = $("#caseQ").value.trim(); $("#caseQ").blur(); renderFault(); };
+    $("#caseQ").onsearch = () => { if (!$("#caseQ").value){ FT.q = ""; renderFault(); } };
+  }
+  if ($("#checkNew")) $("#checkNew").onclick = () => checkEditor(null);
+  el.querySelectorAll("[data-start]").forEach(b => b.onclick = () => startRun(CHECKS.find(c => c.id === b.dataset.start)));
+  el.querySelectorAll("[data-cedit]").forEach(b => b.onclick = () => checkEditor(CHECKS.find(c => c.id === b.dataset.cedit)));
+  el.querySelectorAll("[data-run]").forEach(b => b.onclick = () => { FT.runId = b.dataset.run; renderFault(); window.scrollTo(0, 0); });
+  bindCases(el);
+}
+
+/* ---- 고장 기록 편집 ---- */
+function caseEditor(c, init = {}){
+  const w = c ? {...c, links: (c.links || []).slice()} : {date: ymd(Date.now()), car: "", symptom: "", cause: "", action: "", memo: "", links: [], ...init};
+  const symptoms = [...new Set([...CASES.map(x => x.symptom), ...CHECKS.map(x => x.title)].filter(Boolean))];
+  const draw = () => {
+    openSheet(`<h3 style="margin-top:0">${c ? "고장 기록 수정" : "고장 기록"}</h3>
+      <div class="row"><div class="grow"><label class="f">날짜</label><input class="t" id="cDate" type="date" value="${esc(w.date)}"></div>
+        <div class="grow"><label class="f">편성·차량</label><input class="t" id="cCar" value="${esc(w.car)}" placeholder="예: 12편성 M1"></div></div>
+      <label class="f">고장 증상</label><input class="t" id="cSym" list="symList" value="${esc(w.symptom)}" placeholder="예: 팬토그래프 상승 불가">
+      <datalist id="symList">${symptoms.map(x => `<option value="${esc(x)}">`).join("")}</datalist>
+      <div id="cSimilar"></div>
+      <label class="f">원인</label><textarea class="t" id="cCause" rows="2" placeholder="예: R-PT-01 접점 불량">${esc(w.cause)}</textarea>
+      <label class="f">조치</label><textarea class="t" id="cAction" rows="2" placeholder="예: R-PT-01 교체 후 정상">${esc(w.action)}</textarea>
+      <label class="f">메모 (측정값, 참고 사항)</label><textarea class="t" id="cMemo" rows="2">${esc(w.memo)}</textarea>
+      <label class="f">관련 도면 쪽</label>
+      <div class="chips" id="cLinks">${w.links.map((l, i) => `${linkChip(l, `data-li="${i}"`).replace("</span>", ' <b data-rm="' + i + '" style="cursor:pointer">✕</b></span>')}`).join("") || '<span class="muted">없음</span>'}</div>
+      <div class="row" style="margin-top:6px">${pickerHtml("cPick")}<button class="btn sm" id="cAddLink">＋ 연결</button></div>
+      <div class="row" style="margin-top:16px">${c ? '<button class="btn danger" id="cDel">삭제</button>' : ""}<span class="grow"></span>
+        <button class="btn" id="cCancel">취소</button><button class="btn primary" id="cSave">저장</button></div>`, !!draw.again);
+    draw.again = true;
+    const showSimilar = () => {
+      const sim = findCases($("#cSym").value, c && c.id).slice(0, 3);
+      $("#cSimilar").innerHTML = sim.length ? `<div class="warn" style="line-height:1.5"><b>비슷한 지난 사례</b>${sim.map(x => `<div>· ${esc(x.date || "")} ${esc(x.symptom)}${x.cause ? " → " + esc(x.cause) : ""}${x.action ? " / " + esc(x.action) : ""}</div>`).join("")}</div>` : "";
+    };
+    $("#cSym").oninput = showSimilar; showSimilar();
+    $("#cLinks").querySelectorAll("[data-rm]").forEach(b => b.onclick = e => { e.stopPropagation(); read(); w.links.splice(+b.dataset.rm, 1); draw(); });
+    $("#cAddLink").onclick = () => { read(); const l = pickerRead("cPick"); if (!l) return toast("연결할 도면을 고르세요"); w.links.push(l); draw(); };
+    $("#cCancel").onclick = () => history.back();
+    $("#cSave").onclick = async () => {
+      read();
+      if (!w.symptom.trim()){ $("#cSym").focus(); return toast("고장 증상을 적어 주세요"); }
+      const rec = {...w, id: c ? c.id : uid(), at: c ? c.at : Date.now(), updated: Date.now()};
+      await tx(["cases"], "readwrite", t => t.objectStore("cases").put(rec));
+      await loadAll(); history.back(); afterFaultChange(); toast("고장 기록을 저장했습니다");
+    };
+    if (c) $("#cDel").onclick = async () => {
+      if (!confirm("이 고장 기록을 삭제할까요?")) return;
+      await tx(["cases"], "readwrite", t => t.objectStore("cases").delete(c.id));
+      await loadAll(); history.back(); afterFaultChange();
+    };
+  };
+  const read = () => { w.date = $("#cDate").value; w.car = $("#cCar").value.trim(); w.symptom = $("#cSym").value.trim(); w.cause = $("#cCause").value.trim(); w.action = $("#cAction").value.trim(); w.memo = $("#cMemo").value.trim(); };
+  draw();
+}
+function afterFaultChange(){ if ($("#viewer").classList.contains("open")) renderFoot(); else render(); }
+
+/* ---- 점검 순서 편집 ---- */
+function checkEditor(c){
+  const w = c ? {...c, steps: c.steps.map(s => ({...s}))} : {title: "", steps: [{id: uid(), text: "", expect: "", link: null}]};
+  const draw = () => {
+    openSheet(`<h3 style="margin-top:0">${c ? "점검 순서 수정" : "점검 순서 만들기"}</h3>
+      <label class="f">고장 증상 (점검 순서 이름)</label><input class="t" id="kTitle" value="${esc(w.title)}" placeholder="예: 팬토그래프 상승 불가">
+      ${w.steps.map((s, i) => `<div class="card" style="margin-top:10px">
+        <div class="row"><b>${i + 1}단계</b><span class="grow"></span>
+          <button class="btn sm" data-up="${i}" ${i ? "" : "disabled"}>↑</button><button class="btn sm" data-down="${i}" ${i < w.steps.length - 1 ? "" : "disabled"}>↓</button><button class="btn sm danger" data-del="${i}">✕</button></div>
+        <textarea class="t" data-k="text" data-i="${i}" rows="2" placeholder="점검할 것 (예: R-PT-01 코일 전압 측정)" style="margin-top:6px">${esc(s.text)}</textarea>
+        <input class="t" data-k="expect" data-i="${i}" value="${esc(s.expect || "")}" placeholder="기준값 (예: DC 100V, 선택)" style="margin-top:6px">
+        <div class="row" style="margin-top:6px">${pickerHtml("kp" + i, s.link || null)}</div></div>`).join("")}
+      <div class="row" style="margin-top:10px"><button class="btn" id="kAdd">＋ 단계 추가</button></div>
+      <div class="row" style="margin-top:16px">${c ? '<button class="btn danger" id="kDelAll">삭제</button>' : ""}<span class="grow"></span>
+        <button class="btn" id="kCancel">취소</button><button class="btn primary" id="kSave">저장</button></div>`, !!draw.again);
+    draw.again = true;
+    const move = (i, j) => { read(); [w.steps[i], w.steps[j]] = [w.steps[j], w.steps[i]]; draw(); };
+    $("#sheetPanel").querySelectorAll("[data-up]").forEach(b => b.onclick = () => move(+b.dataset.up, +b.dataset.up - 1));
+    $("#sheetPanel").querySelectorAll("[data-down]").forEach(b => b.onclick = () => move(+b.dataset.down, +b.dataset.down + 1));
+    $("#sheetPanel").querySelectorAll("[data-del]").forEach(b => b.onclick = () => { read(); w.steps.splice(+b.dataset.del, 1); draw(); });
+    $("#kAdd").onclick = () => { read(); w.steps.push({id: uid(), text: "", expect: "", link: null}); draw(); setTimeout(() => $(`[data-k=text][data-i="${w.steps.length - 1}"]`).focus(), 50); };
+    $("#kCancel").onclick = () => history.back();
+    $("#kSave").onclick = async () => {
+      read();
+      w.steps = w.steps.filter(s => s.text);
+      if (!w.title){ $("#kTitle").focus(); return toast("이름(고장 증상)을 적어 주세요"); }
+      if (!w.steps.length) return toast("단계를 하나 이상 적어 주세요");
+      const rec = {...w, id: c ? c.id : uid(), at: c ? c.at : Date.now(), updated: Date.now()};
+      await tx(["checks"], "readwrite", t => t.objectStore("checks").put(rec));
+      await loadAll(); history.back(); FT.seg = "checks"; render(); toast("점검 순서를 저장했습니다");
+    };
+    if (c) $("#kDelAll").onclick = async () => {
+      if (!confirm("이 점검 순서를 삭제할까요? 지난 점검 기록은 남아요.")) return;
+      await tx(["checks"], "readwrite", t => t.objectStore("checks").delete(c.id));
+      await loadAll(); history.back(); render();
+    };
+  };
+  const read = () => {
+    w.title = $("#kTitle").value.trim();
+    $("#sheetPanel").querySelectorAll("[data-k]").forEach(x => { w.steps[+x.dataset.i][x.dataset.k] = x.value.trim(); });
+    w.steps.forEach((s, i) => { s.link = pickerRead("kp" + i); });
+  };
+  draw();
+}
+
+/* ---- 현장 점검: 시작할 때 단계를 복사해 두어, 나중에 점검 순서를 고쳐도 지난 기록은 그대로 ---- */
+async function startRun(c){
+  const r = {id: uid(), checkId: c.id, title: c.title, car: "", at: Date.now(), steps: c.steps.map(s => ({...s})), res: {}, memo: "", done: false};
+  await tx(["runs"], "readwrite", t => t.objectStore("runs").put(r));
+  await loadAll(); FT.runId = r.id; setTab("fault"); window.scrollTo(0, 0);
+}
+const saveRun = r => tx(["runs"], "readwrite", t => t.objectStore("runs").put(r));
+function renderRun(el, r){
+  const checked = r.steps.filter(s => r.res[s.id]?.ok != null).length, bad = r.steps.filter(s => r.res[s.id]?.ok === false);
+  el.innerHTML = `<div class="row" style="margin-bottom:10px"><button class="btn sm" id="runBack">← 목록</button><b class="grow">${esc(r.title)}</b><span class="muted">${ymd(r.at)}</span></div>
+    <div class="row"><label class="f" style="margin:0">편성·차량</label><input class="t grow" id="runCar" value="${esc(r.car)}" placeholder="예: 12편성 M1" ${r.done ? "readonly" : ""}></div>
+    <div class="muted" style="margin:10px 0">${checked}/${r.steps.length}단계 확인${bad.length ? ` · 이상 ${bad.length}` : ""}${r.done ? " · 끝난 점검" : ""}</div>
+    ${r.steps.map((s, i) => { const x = r.res[s.id] || {}; return `<div class="card step ${x.ok === true ? "ok" : x.ok === false ? "ng" : ""}">
+      <div class="row" style="align-items:flex-start"><b>${i + 1}.</b><div class="grow"><div class="pre">${esc(s.text)}</div>${s.expect ? `<div class="muted">기준: ${esc(s.expect)}</div>` : ""}</div></div>
+      <div class="row" style="margin-top:8px">
+        <button class="btn sm ${x.ok === true ? "good" : ""}" data-ok="${s.id}" ${r.done ? "disabled" : ""}>✓ 정상</button><button class="btn sm ${x.ok === false ? "bad" : ""}" data-ng="${s.id}" ${r.done ? "disabled" : ""}>✗ 이상</button>
+        <input class="t grow" data-v="${s.id}" value="${esc(x.v || "")}" placeholder="측정값" style="min-width:90px" ${r.done ? "readonly" : ""}>
+        ${s.link ? linkChip(s.link) : ""}</div></div>`; }).join("")}
+    <label class="f">메모</label><textarea class="t" id="runMemo" rows="2" ${r.done ? "readonly" : ""}>${esc(r.memo)}</textarea>
+    <div class="row" style="margin-top:12px"><button class="btn danger" id="runDel">삭제</button><span class="grow"></span>
+      ${r.done ? '<button class="btn" id="runReopen">다시 고치기</button>' : '<button class="btn" id="runFinish">점검 끝내기</button>'}
+      <button class="btn primary" id="runCase">고장 이력으로 저장</button></div>
+    <div class="muted" style="margin-top:6px">적는 즉시 저장돼요. 도면을 보고 돌아와도 그대로 있어요.</div>`;
+  const set = (id, ok) => { const x = r.res[id] || {}; x.ok = x.ok === ok ? null : ok; r.res[id] = x; saveRun(r); renderRun(el, r); };
+  el.querySelectorAll("[data-ok]").forEach(b => b.onclick = () => set(b.dataset.ok, true));
+  el.querySelectorAll("[data-ng]").forEach(b => b.onclick = () => set(b.dataset.ng, false));
+  el.querySelectorAll("[data-v]").forEach(i => i.onchange = () => { (r.res[i.dataset.v] = r.res[i.dataset.v] || {}).v = i.value.trim(); saveRun(r); });
+  $("#runCar").onchange = e => { r.car = e.target.value.trim(); saveRun(r); };
+  $("#runMemo").onchange = e => { r.memo = e.target.value.trim(); saveRun(r); };
+  $("#runBack").onclick = () => { FT.runId = null; FT.seg = "checks"; renderFault(); };
+  if ($("#runFinish")) $("#runFinish").onclick = async () => { r.done = true; await saveRun(r); renderRun(el, r); toast("점검을 끝냈습니다"); };
+  if ($("#runReopen")) $("#runReopen").onclick = async () => { r.done = false; await saveRun(r); renderRun(el, r); };
+  $("#runDel").onclick = async () => {
+    if (!confirm("이 점검 기록을 삭제할까요?")) return;
+    await tx(["runs"], "readwrite", t => t.objectStore("runs").delete(r.id));
+    await loadAll(); FT.runId = null; renderFault();
+  };
+  // 점검 결과를 고장 이력으로: 이상 나온 단계는 원인 후보로, 전체 결과는 메모로
+  $("#runCase").onclick = () => {
+    const line = (s, i) => { const x = r.res[s.id] || {}; return `${i + 1}. ${s.text}${x.ok === true ? " → 정상" : x.ok === false ? " → 이상" : " → 확인 안 함"}${x.v ? ` (${x.v})` : ""}`; };
+    const links = [], seen = new Set();
+    for (const s of r.steps) if (s.link && !seen.has(s.link.hash + "/" + s.link.page)){ seen.add(s.link.hash + "/" + s.link.page); links.push(s.link); }
+    caseEditor(null, {date: ymd(r.at), car: r.car, symptom: r.title, cause: bad.map(s => s.text + (r.res[s.id].v ? ` (${r.res[s.id].v})` : "")).join("\n"),
+      memo: "점검 결과\n" + r.steps.map(line).join("\n") + (r.memo ? "\n" + r.memo : ""), links});
+  };
+  bindLinks(el);
+}
 
 /* ---------- viewer ---------- */
 const V = {doc: null, fileId: null, page: 1, zoom: 1, fitScale: 1, query: "", rendering: null, pending: false};
@@ -977,13 +1235,15 @@ function refFoot(){
   if (labels.length) html += `<div class="chips"><span class="muted">다른 도면으로 연결</span> ${labels.map(l => `<span class="chip x ref${findSheet(parseRef(l).sheet) ? "" : " none"}" data-ref="${l}">${l}</span>`).join("")}</div>`;
   return html;
 }
+const pageCases = () => CASES.filter(c => (c.links || []).some(l => linkFile(l)?.id === V.fileId && l.page === V.page)).sort(byDate);
 function renderFoot(){
   const tg = tagsOf(V.fileId, V.page);
   const hits = document.querySelectorAll("#hl .hit").length, exactHits = document.querySelectorAll("#hl .hit.exact").length;
   const pg = PAGES.find(x => x.fileId === V.fileId && x.page === V.page);
   $("#vFoot").innerHTML = `<div class="row">
       <div class="grow chips" style="margin:0">${tg.length ? tg.map(t => `<span class="chip x" data-t="${t.id}" title="${esc(t.note || "")}">🏷 ${esc(t.label)}</span>`).join("") : '<span class="muted">이 페이지에 태그 없음</span>'}</div>
-      <button class="btn sm primary" id="addTag">＋ 태그</button></div>
+      <button class="btn sm" id="addCase">＋ 고장 기록</button><button class="btn sm primary" id="addTag">＋ 태그</button></div>
+    ${pageCases().length ? `<div class="chips"><span class="muted">이 쪽과 연결된 고장 기록</span> ${pageCases().map(c => `<span class="chip x" data-vc="${c.id}">🛠 ${esc(c.symptom)} ${esc(c.date || "")}</span>`).join("")}</div>` : ""}
     <div class="row" style="margin-top:6px">
       <button class="btn sm" id="ocrPage">${pg && pg.ocr ? "이 쪽 다시 인식" : "이 쪽 글자 인식"}</button>
       ${pg && pg.ocr ? `<label class="muted row" style="gap:4px"><input type="checkbox" id="showOcr" ${V.showOcr ? "checked" : ""}> 인식된 글자 ${pg.ocr.words.length}개 표시</label>` : ""}
@@ -995,6 +1255,8 @@ function renderFoot(){
   $("#vNextHit").hidden = !V.query || (hits <= 1 && (V.findPages || []).length <= 1);
   $("#vFoot").querySelectorAll("[data-gp]").forEach(c => c.onclick = () => { V.hitIdx = 0; goPage(+c.dataset.gp); });
   $("#addTag").onclick = () => tagEditor(null);
+  $("#addCase").onclick = () => caseEditor(null, {links: [mkLink(V.fileId, V.page)]});
+  $("#vFoot").querySelectorAll("[data-vc]").forEach(c => c.onclick = () => caseEditor(CASES.find(x => x.id === c.dataset.vc)));
   $("#vFoot").querySelectorAll("[data-ref]").forEach(c => c.onclick = () => goRef(parseRef(c.dataset.ref)));
   if ($("#refBack")) $("#refBack").onclick = () => history.back();
   $("#refsOn").onchange = e => { try { localStorage.setItem("ktx-refs", e.target.checked ? "1" : "0"); } catch {} renderPage(); };
@@ -1031,9 +1293,11 @@ function tagEditor(tag){
   setTimeout(() => $("#tLabel").focus(), 50);
 }
 
-function openSheet(html){
-  $("#sheetPanel").innerHTML = html; $("#sheet").classList.add("open");
-  history.pushState({sheet: 1}, "");
+// redraw: 이미 열린 시트 내용만 바꿈 (뒤로 가기 기록을 또 쌓지 않고, 보던 위치도 유지)
+function openSheet(html, redraw){
+  const pn = $("#sheetPanel"), top = pn.scrollTop;
+  pn.innerHTML = html; $("#sheet").classList.add("open");
+  if (redraw) pn.scrollTop = top; else history.pushState({sheet: 1}, "");
 }
 function closeSheet(fromPop){
   if (!$("#sheet").classList.contains("open")) return;
