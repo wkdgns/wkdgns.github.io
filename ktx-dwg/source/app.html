@@ -69,6 +69,14 @@ input.t,textarea.t,select.t{width:100%;padding:10px 12px;border:1px solid var(--
 .pre{white-space:pre-wrap}
 .btn.good{background:#2a9d5c;color:#fff;border-color:#2a9d5c}.btn.bad{background:var(--danger);color:#fff;border-color:var(--danger)}
 .card.step.ok{border-left:5px solid #2a9d5c}.card.step.ng{border-left:5px solid var(--danger)}
+.trail{display:flex;gap:6px;overflow-x:auto;padding:6px 10px;background:var(--card);border-bottom:1px solid var(--line);white-space:nowrap;align-items:center}
+.trail[hidden]{display:none}.trail .chip,.trail .btn{flex:none}.trail .chip.cur{background:var(--accent);color:var(--accent-ink)}
+.wrow{padding:8px 0;border-bottom:1px solid var(--line)}
+#hl div.pin{pointer-events:auto;cursor:pointer;background:#e8590c;color:#fff;outline:none;border-radius:10px;padding:2px 8px;font:700 12px system-ui;white-space:nowrap;max-width:220px;overflow:hidden;text-overflow:ellipsis;transform:translate(-50%,calc(-100% - 8px));box-shadow:0 1px 4px rgba(0,0,0,.45)}
+#hl div.pin.ok{background:#2a9d5c}#hl div.pin.ng{background:#d62828}
+#split{position:fixed;top:0;left:50%;width:50%;height:100%;border:0;border-left:3px solid var(--accent);z-index:21;background:var(--viewer-bg)}
+body.splitting #viewer{right:50%}
+body.pane header,body.pane main{display:none}
 .lvhead{font-size:13px;font-weight:700;color:var(--sub);margin:14px 2px 6px;letter-spacing:.02em}
 .recent{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 12px}
 /* viewer */
@@ -145,12 +153,15 @@ input.t,textarea.t,select.t{width:100%;padding:10px 12px;border:1px solid var(--
     <button class="btn sm" id="vZoomOut">－</button>
     <button class="btn sm" id="vFit">맞춤</button>
     <button class="btn sm" id="vZoomIn">＋</button>
+    <button class="btn sm" id="vSplit">⧉ 나란히</button>
+    <button class="btn sm" id="vOpts" title="보기 설정">⚙</button>
   </div>
   <form class="vfind" id="vFind" autocomplete="off">
     <input id="vQ" type="search" placeholder="이 도면에서 찾기 (선번호, 계전기…)" enterkeyhint="search">
     <button class="btn sm primary" type="submit">찾기</button>
     <button class="btn sm" type="button" id="vNextHit" hidden>다음 위치</button>
   </form>
+  <div class="trail" id="vTrail" hidden></div>
   <div id="stage"><div id="pagewrap"><canvas id="cv"></canvas><div id="hl"></div></div></div>
   <div class="vfoot" id="vFoot"></div>
 </div>
@@ -163,7 +174,7 @@ input.t,textarea.t,select.t{width:100%;padding:10px 12px;border:1px solid var(--
 <script>
 "use strict";
 /* ---------- storage (IndexedDB, 이 기기 안에서만) ---------- */
-const DB_NAME = "ktx-dwg", DB_VER = 2;
+const DB_NAME = "ktx-dwg", DB_VER = 3;
 let db;
 function openDB(){
   return new Promise((res, rej) => {
@@ -183,6 +194,7 @@ function openDB(){
         d.createObjectStore("checks", {keyPath: "id"});  // 점검 순서 (증상별 단계)
         d.createObjectStore("runs", {keyPath: "id"});    // 점검 순서를 실제로 해 본 기록
       }
+      if (e.oldVersion < 3) d.createObjectStore("pins", {keyPath: "id"});  // 도면 위 측정 메모
     };
     r.onsuccess = () => res(r.result);
     r.onerror = () => rej(r.error);
@@ -203,9 +215,9 @@ const getAll = (store) => tx([store], "readonly", t => req(t.objectStore(store).
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
 /* ---------- in-memory index ---------- */
-let FILES = [], PAGES = [], TAGS = [], CASES = [], CHECKS = [], RUNS = [];
+let FILES = [], PAGES = [], TAGS = [], CASES = [], CHECKS = [], RUNS = [], PINS = [];
 async function loadAll(){
-  [FILES, PAGES, TAGS, CASES, CHECKS, RUNS] = await Promise.all(["files", "pages", "tags", "cases", "checks", "runs"].map(getAll));
+  [FILES, PAGES, TAGS, CASES, CHECKS, RUNS, PINS] = await Promise.all(["files", "pages", "tags", "cases", "checks", "runs", "pins"].map(getAll));
   FILES.sort((a, b) => a.name.localeCompare(b.name, "ko", {numeric: true}));
   for (const p of PAGES){ p.norm = norm(p.text); p.onorm = p.ocr ? norm(p.ocr.text) : ""; p.oskel = skel(p.onorm); p.words = null; }
 }
@@ -485,7 +497,7 @@ function renderSettings(){
   $("#themeSel").onchange = e => setTheme(e.target.value);
   $("#wipeBtn").onclick = async () => {
     if (!confirm("등록한 도면, 태그, 고장 기록, 점검 순서를 모두 삭제합니다. 되돌릴 수 없습니다. 계속할까요?")) return;
-    const all = ["files", "blobs", "pages", "tags", "cases", "checks", "runs"];
+    const all = ["files", "blobs", "pages", "tags", "cases", "checks", "runs", "pins"];
     await tx(all, "readwrite", t => { for (const s of all) t.objectStore(s).clear(); });
     await loadAll(); render(); toast("모두 삭제했습니다");
   };
@@ -505,7 +517,8 @@ function backup(withOcr){
     // 고장 기록과 점검 순서: 도면 연결은 기기마다 다른 id 대신 PDF 지문(hash)으로 담는다
     cases: CASES.map(c => ({...c, links: (c.links || []).map(linkOut)})),
     checks: CHECKS.map(c => ({...c, steps: c.steps.map(st => ({...st, link: st.link && linkOut(st.link)}))})),
-    runs: RUNS};
+    runs: RUNS,
+    pins: PINS.map(p => { const {fileId, ...rest} = p; return {...rest, ...linkOut(p)}; })};
   // 글자 인식 결과도 담으면 PC에서 인식한 걸 탭으로 옮길 수 있다 (같은 PDF를 양쪽에 등록해 두어야 함)
   if (withOcr) data.ocr = PAGES.filter(p => p.ocr).map(p => ({hash: fileById(p.fileId)?.hash, page: p.page, words: p.ocr.words, mode: p.ocr.mode, q: p.ocr.q}));
   const name = (withOcr ? "KTX도면_태그·고장기록+인식결과백업_" : "KTX도면_태그·고장기록백업_") + new Date().toISOString().slice(0, 10) + ".json";
@@ -523,12 +536,13 @@ $("#restorePicker").onchange = async e => {
     if (data.app !== "ktx-dwg") throw new Error("형식이 다릅니다");
     const byHash = new Map(FILES.map(f => [f.hash, f]));
     let added = 0, skipped = 0, ocrPages = 0, faults = 0;
-    await tx(["files", "tags", "pages", "cases", "checks", "runs"], "readwrite", async t => {
+    await tx(["files", "tags", "pages", "cases", "checks", "runs", "pins"], "readwrite", async t => {
       // 고장 기록·점검 순서·점검 기록: 같은 id가 이미 있으면 그대로 둔다 (같은 백업을 두 번 복원해도 겹치지 않게)
       const linkIn = l => { const f = byHash.get(l.hash); return {fileId: f ? f.id : null, hash: l.hash, name: l.name, page: l.page}; };
       for (const c of data.cases || []) if (!CASES.some(x => x.id === c.id)){ t.objectStore("cases").put({...c, links: (c.links || []).map(linkIn)}); faults++; }
       for (const c of data.checks || []) if (!CHECKS.some(x => x.id === c.id)){ t.objectStore("checks").put({...c, steps: c.steps.map(st => ({...st, link: st.link && linkIn(st.link)}))}); faults++; }
       for (const r of data.runs || []) if (!RUNS.some(x => x.id === r.id)) t.objectStore("runs").put(r);
+      for (const p of data.pins || []) if (!PINS.some(x => x.id === p.id)){ t.objectStore("pins").put({...p, ...linkIn(p)}); faults++; }
       for (const bf of data.files || []){
         const f = byHash.get(bf.hash);
         if (f && bf.memo && !f.memo){ f.memo = bf.memo; t.objectStore("files").put(stripFile(f)); }
@@ -807,6 +821,7 @@ function renderRun(el, r){
         <button class="btn sm ${x.ok === true ? "good" : ""}" data-ok="${s.id}" ${r.done ? "disabled" : ""}>✓ 정상</button><button class="btn sm ${x.ok === false ? "bad" : ""}" data-ng="${s.id}" ${r.done ? "disabled" : ""}>✗ 이상</button>
         <input class="t grow" data-v="${s.id}" value="${esc(x.v || "")}" placeholder="측정값" style="min-width:90px" ${r.done ? "readonly" : ""}>
         ${s.link ? linkChip(s.link) : ""}</div></div>`; }).join("")}
+    ${PINS.some(p => p.runId === r.id) ? `<label class="f">도면 측정 메모</label><div class="chips">${PINS.filter(p => p.runId === r.id).map(p => { const f = linkFile(p); return f ? `<span class="chip x" data-lf="${f.id}" data-lp="${p.page}">📍 ${esc(p.text)}${p.ok === false ? " ⚠" : ""} · ${esc(shortName(f))} ${p.page}쪽</span>` : ""; }).join("")}</div>` : ""}
     <label class="f">메모</label><textarea class="t" id="runMemo" rows="2" ${r.done ? "readonly" : ""}>${esc(r.memo)}</textarea>
     <div class="row" style="margin-top:12px"><button class="btn danger" id="runDel">삭제</button><span class="grow"></span>
       ${r.done ? '<button class="btn" id="runReopen">다시 고치기</button>' : '<button class="btn" id="runFinish">점검 끝내기</button>'}
@@ -832,7 +847,7 @@ function renderRun(el, r){
     const links = [], seen = new Set();
     for (const s of r.steps) if (s.link && !seen.has(s.link.hash + "/" + s.link.page)){ seen.add(s.link.hash + "/" + s.link.page); links.push(s.link); }
     caseEditor(null, {date: ymd(r.at), car: r.car, symptom: r.title, cause: bad.map(s => s.text + (r.res[s.id].v ? ` (${r.res[s.id].v})` : "")).join("\n"),
-      memo: "점검 결과\n" + r.steps.map(line).join("\n") + (r.memo ? "\n" + r.memo : ""), links});
+      memo: "점검 결과\n" + r.steps.map(line).join("\n") + (PINS.some(p => p.runId === r.id) ? "\n측정 메모\n" + PINS.filter(p => p.runId === r.id).map(pinLine).join("\n") : "") + (r.memo ? "\n" + r.memo : ""), links});
   };
   bindLinks(el);
 }
@@ -843,7 +858,7 @@ let docCache = {id: null, doc: null};
 async function openViewer(fileId, page, query){
   if (!fileById(fileId)) return;
   $("#viewer").classList.add("open");
-  history.pushState({viewer: 1}, "");
+  if (!PANE) history.pushState({viewer: 1}, "");
   V.back = []; V.zone = null;
   await showDoc(fileId, page, query);
 }
@@ -872,7 +887,7 @@ async function showDoc(fileId, page, query, zoom){
   }
   await renderPage();
 }
-function closeViewer(){ $("#viewer").classList.remove("open"); render(); }
+function closeViewer(){ closeSplit(); $("#viewer").classList.remove("open"); render(); }
 window.addEventListener("popstate", () => {
   if ($("#sheet").classList.contains("open")){ closeSheet(true); return; }
   if (!$("#viewer").classList.contains("open")) return;
@@ -880,13 +895,16 @@ window.addEventListener("popstate", () => {
   if (V.back && V.back.length && !V.closing){ goBackRef(); return; }
   V.closing = false; closeViewer();
 });
-$("#vClose").onclick = () => { const n = (V.back || []).length; if (n){ V.closing = true; V.back = []; V.zone = null; } history.go(-(n + 1)); };
+$("#vClose").onclick = () => {
+  if (PANE){ parent.postMessage({ktx: "closeSplit"}, location.origin); return; } const n = (V.back || []).length; if (n){ V.closing = true; V.back = []; V.zone = null; } history.go(-(n + 1)); };
 $("#vPrev").onclick = () => goPage(V.page - 1);
 $("#vNext").onclick = () => goPage(V.page + 1);
 $("#vPage").onchange = e => goPage(parseInt(e.target.value, 10) || V.page);
 $("#vZoomIn").onclick = () => setZoom(V.zoom * 1.4);
 $("#vZoomOut").onclick = () => setZoom(V.zoom / 1.4);
 $("#vFit").onclick = () => setZoom(1);
+$("#vOpts").onclick = () => viewOptions();
+$("#vSplit").onclick = () => document.body.classList.contains("splitting") ? closeSplit() : splitPicker();
 /* 보기 화면 안에서 찾기: 이 쪽에 있으면 그 위치로, 없으면 이 도면에서 처음 나오는 쪽으로 이동 */
 $("#vFind").onsubmit = e => {
   e.preventDefault();
@@ -912,7 +930,11 @@ function scrollToHit(el){
   const st = $("#stage");
   st.scrollTo({left: el.offsetLeft + el.offsetWidth / 2 - st.clientWidth / 2, top: el.offsetTop + el.offsetHeight / 2 - st.clientHeight / 2});
 }
-$("#hl").addEventListener("click", e => { const d = e.target.closest(".ocrbox"); if (d) toast("인식된 글자: " + d.dataset.t, 2500); });
+$("#hl").addEventListener("click", e => {
+  const d = e.target.closest(".ocrbox"), pn = e.target.closest(".pin");
+  if (pn) pinEditor(PINS.find(p => p.id === pn.dataset.pin));
+  else if (d){ const wr = $("#pagewrap").getBoundingClientRect(), r = d.getBoundingClientRect(); wordSheet(d.dataset.t, {x: (r.left + r.width / 2 - wr.left) / wr.width, y: (r.top - wr.top) / wr.height}); }
+});
 function goPage(p){ if (!V.doc) return; p = Math.max(1, Math.min(V.doc.numPages, p)); if (p !== V.page){ V.page = p; renderPage(); } else $("#vPage").value = p; }
 function setZoom(z){
   const st = $("#stage"), cx = (st.scrollLeft + st.clientWidth / 2) / st.scrollWidth, cy = (st.scrollTop + st.clientHeight / 2) / st.scrollHeight;
@@ -969,6 +991,9 @@ async function renderPage(){
   await highlight(page, vp);
   const zone = await drawRefs(page, vp);
   if (zone && V.zone.scroll){ V.zone.scroll = false; scrollToHit(zone.div); }
+  drawPins(vp);
+  if (optOn("tap")) await collectWords(page, vp); else V.tapWords = [];
+  trailPush(); renderTrail();
   renderFoot();
 }
 
@@ -1021,15 +1046,198 @@ async function highlight(page, vp){
   return finish();
 }
 
+/* ---------- 고장 추적 도구: 보기 설정, 지나온 경로, 글자 눌러 찾기, 측정 메모, 나란히 보기 ---------- */
+// 화면이 복잡해질 수 있는 것은 켜고 끌 수 있게 (기기에 기억)
+const VIEW_OPTS = {
+  refs: ["ktx-refs", "다른 도면 연결 표시", "490.8B 같은 표시에 초록 박스, 누르면 그 도면으로"],
+  trail: ["ktx-trail", "지나온 경로", "위쪽 줄에 거쳐 온 도면을 보여주고, 누르면 그 단계로"],
+  pins: ["ktx-pins", "측정 메모 핀", "도면 위에 적어 둔 측정값을 핀으로 표시"],
+  tap: ["ktx-tap", "글자 눌러서 찾기", "선번호·장치 이름을 누르면 같은 글자가 나오는 도면을 모아 보기"]
+};
+const optOn = k => { try { return localStorage.getItem(VIEW_OPTS[k][0]) !== "0"; } catch { return true; } };
+const setOpt = (k, v) => { try { localStorage.setItem(VIEW_OPTS[k][0], v ? "1" : "0"); } catch {} };
+function viewOptions(){
+  openSheet(`<h3 style="margin-top:0">보기 설정</h3>
+    ${Object.entries(VIEW_OPTS).map(([k, [, label, sub]]) => `<label class="opt"><input type="checkbox" data-opt="${k}" ${optOn(k) ? "checked" : ""}><span><b>${label}</b><br><span class="muted">${sub}</span></span></label>`).join("")}
+    <div class="row" style="margin-top:12px"><span class="grow"></span><button class="btn primary" id="optDone">닫기</button></div>`);
+  $("#sheetPanel").querySelectorAll("[data-opt]").forEach(c => c.onchange = () => { setOpt(c.dataset.opt, c.checked); renderPage(); });
+  $("#optDone").onclick = () => history.back();
+}
+// 시트를 닫고 난 뒤에 할 일 (뒤로 가기 기록이 꼬이지 않게 시트가 완전히 닫힌 다음 실행)
+let sheetAfter = null;
+const sheetThen = fn => { sheetAfter = fn; history.back(); };
+
+/* 다른 도면으로 건너가기: 뒤로 가기로 돌아올 수 있게 지금 위치를 쌓아 둔다 */
+async function jumpTo(fileId, page, query, zone){
+  const st = $("#stage");
+  V.back = V.back || [];
+  V.back.push({fileId: V.fileId, page: V.page, zoom: V.zoom, query: V.query, sx: st.scrollLeft / st.scrollWidth, sy: st.scrollTop / st.scrollHeight, from: fileById(V.fileId).name});
+  if (!PANE) history.pushState({viewer: 1, jump: 1}, "");  // 옆 칸은 뒤로 가기 기록을 쓰지 않고 돌아가기 버튼으로만
+  V.zone = zone || null;
+  await showDoc(fileId, page, query || "");
+}
+
+/* 지나온 경로: 처음 간 순서대로 쌓고, 이미 지나온 곳으로 돌아가면 그 자리만 표시한다 (앞쪽 경로도 남겨 두어 다시 갈 수 있게) */
+let TRAIL = (() => { try { return JSON.parse(localStorage.getItem("ktx-trail-list") || "[]"); } catch { return []; } })();
+function trailPush(){
+  if (PANE) return;  // 옆 칸에서 본 건 경로에 넣지 않음
+  const i = TRAIL.findIndex(t => t.fileId === V.fileId && t.page === V.page);
+  if (i < 0) TRAIL.push({fileId: V.fileId, page: V.page});
+  TRAIL = TRAIL.filter(t => fileById(t.fileId)).slice(-15);
+  try { localStorage.setItem("ktx-trail-list", JSON.stringify(TRAIL)); } catch {}
+}
+const shortName = f => f.name.length > 14 ? f.name.slice(0, 13) + "…" : f.name;
+function renderTrail(){
+  const el = $("#vTrail");
+  el.hidden = PANE || !optOn("trail") || TRAIL.length < 2;
+  if (el.hidden) return;
+  el.innerHTML = `<span class="muted">경로</span>` + TRAIL.map((t, i) => {
+    const f = fileById(t.fileId), cur = t.fileId === V.fileId && t.page === V.page;
+    return `${i ? '<span class="muted">›</span>' : ""}<span class="chip x ${cur ? "cur" : ""}" data-ti="${i}">${esc(shortName(f))}${f.pages > 1 ? " " + t.page + "쪽" : ""}</span>`;
+  }).join("") + `<button class="btn sm" id="trailClear">지우기</button>`;
+  el.querySelectorAll("[data-ti]").forEach(c => c.onclick = () => { const t = TRAIL[+c.dataset.ti]; if (t.fileId !== V.fileId || t.page !== V.page) jumpTo(t.fileId, t.page, ""); });
+  $("#trailClear").onclick = () => { TRAIL = [{fileId: V.fileId, page: V.page}]; trailPush(); renderTrail(); };
+  el.scrollLeft = el.scrollWidth;
+}
+
+/* 누를 수 있는 글자: 인식한 글자와 PDF 안 글자의 화면 위치 */
+async function collectWords(page, vp){
+  const out = [];
+  const pg = PAGES.find(x => x.fileId === V.fileId && x.page === V.page);
+  if (pg && pg.ocr) for (const w of pg.ocr.words) out.push({t: w.t, x: w.x * vp.width, y: w.y * vp.height, w: w.w * vp.width, h: w.h * vp.height});
+  const tc = await page.getTextContent();
+  for (const it of tc.items){
+    if (!it.str || !it.str.trim()) continue;
+    const [a, b, c, d, e, f] = it.transform, h = Math.hypot(c, d) || Math.hypot(a, b);
+    if (Math.abs(Math.atan2(b, a)) > 0.5){  // 세로 글자는 덩어리째
+      const [x1, y1, x2, y2] = vp.convertToViewportRectangle([e - h * 0.95, f, e + h * 0.2, f + it.width]);
+      out.push({t: it.str, x: Math.min(x1, x2), y: Math.min(y1, y2), w: Math.abs(x2 - x1), h: Math.abs(y2 - y1)});
+      continue;
+    }
+    const [x1, y1, x2, y2] = vp.convertToViewportRectangle([e, f - h * 0.2, e + it.width, f + h * 0.95]);
+    const X = Math.min(x1, x2), Y = Math.min(y1, y2), Wd = Math.abs(x2 - x1), Hd = Math.abs(y2 - y1), L = it.str.length;
+    // 한 줄에 여러 낱말이 있으면 글자 수 비율로 나눠서 낱말마다 누를 수 있게
+    let off = 0;
+    for (const tk of it.str.split(/(\s+)/)){ if (tk.trim()) out.push({t: tk, x: X + Wd * off / L, y: Y, w: Wd * tk.length / L, h: Hd}); off += tk.length; }
+  }
+  V.tapWords = out;
+}
+$("#stage").addEventListener("click", e => {
+  if (e.target.closest(".xref, .ocrbox, .pin")) return;  // 각자 따로 처리
+  const wr = $("#pagewrap").getBoundingClientRect(), x = e.clientX - wr.left, y = e.clientY - wr.top;
+  if (x < 0 || y < 0 || x > wr.width || y > wr.height) return;
+  if (V.pinMode){ V.pinMode = false; renderFoot(); pinEditor(null, {x: x / wr.width, y: y / wr.height}); return; }
+  if (!optOn("tap")) return;
+  const pad = 8, w = (V.tapWords || []).filter(w => x >= w.x - pad && x <= w.x + w.w + pad && y >= w.y - pad && y <= w.y + w.h + pad).sort((a, b) => a.w * a.h - b.w * b.h)[0];
+  if (w) wordSheet(w.t, {x: (w.x + w.w / 2) / wr.width, y: w.y / wr.height});
+});
+
+/* 같은 선번호·장치가 나오는 곳 모아 보기 */
+const canSplit = () => !PANE && window.innerWidth >= 700;
+function wordSheet(text, pos){
+  const draw = q => {
+    const rs = q ? search(q) : [];
+    const exact = rs.filter(r => r.level === LEVEL.exact), part = rs.filter(r => r.level !== LEVEL.exact);
+    const row = r => {
+      const f = fileById(r.fileId), here = r.fileId === V.fileId && r.page === V.page;
+      return `<div class="row wrow"><div class="grow">${here ? "▶ " : ""}<b>${esc(f.name)}</b> <span class="muted">${r.page}쪽${here ? " · 지금 보는 쪽" : ""}</span></div>
+        ${here ? "" : `<button class="btn sm" data-go="${r.fileId}|${r.page}">열기</button>${canSplit() ? `<button class="btn sm" data-side="${r.fileId}|${r.page}">옆에 열기</button>` : ""}`}</div>`;
+    };
+    openSheet(`<h3 style="margin-top:0">선번호·장치 찾기</h3>
+      <form class="row" id="wForm" autocomplete="off"><input class="t grow" id="wQ" value="${esc(q)}" enterkeyhint="search"><button class="btn primary">찾기</button></form>
+      <div class="muted" style="margin-top:4px">글자가 잘못 읽혔으면 고쳐서 다시 찾으세요.</div>
+      ${pos ? `<div class="row" style="margin-top:10px"><button class="btn" id="wPin">📍 여기에 측정값 적기</button></div>` : ""}
+      <div class="lvhead">같은 글자가 나오는 곳 ${exact.length}</div>${exact.map(row).join("") || '<div class="muted">없음</div>'}
+      ${part.length ? `<div class="lvhead">이 글자가 들어간 다른 이름 ${part.length}${part.length > 40 ? " (40개만 표시)" : ""}</div>${part.slice(0, 40).map(row).join("")}` : ""}`, !!draw.again);
+    draw.again = true;
+    $("#wForm").onsubmit = e => { e.preventDefault(); $("#wQ").blur(); draw($("#wQ").value.trim()); };
+    if ($("#wPin")) $("#wPin").onclick = () => { const v = $("#wQ").value.trim(); sheetThen(() => pinEditor(null, pos, v)); };
+    $("#sheetPanel").querySelectorAll("[data-go]").forEach(b => b.onclick = () => { const [f, p] = b.dataset.go.split("|"); sheetThen(() => jumpTo(f, +p, q)); });
+    $("#sheetPanel").querySelectorAll("[data-side]").forEach(b => b.onclick = () => { const [f, p] = b.dataset.side.split("|"); sheetThen(() => openSplit(f, +p, q)); });
+  };
+  draw((text || "").trim().replace(/^[^0-9A-Za-z가-힣(]+|[^0-9A-Za-z가-힣)]+$/g, ""));
+}
+
+/* 측정 메모: 도면 위 한 점에 측정값을 핀으로 남긴다. 진행 중인 점검이 있으면 그 점검에 묶는다 */
+const activeRun = () => RUNS.filter(r => !r.done).sort((a, b) => b.at - a.at)[0];
+const pinsHere = () => PINS.filter(p => linkFile(p)?.id === V.fileId && p.page === V.page);
+function drawPins(vp){
+  if (!optOn("pins")) return;
+  const hl = $("#hl");
+  for (const p of pinsHere()){
+    const div = document.createElement("div");
+    div.className = "pin" + (p.ok === true ? " ok" : p.ok === false ? " ng" : ""); div.dataset.pin = p.id;
+    div.textContent = p.text || "📍";
+    div.style.left = p.x * vp.width + "px"; div.style.top = p.y * vp.height + "px";
+    hl.appendChild(div);
+  }
+}
+function pinEditor(p, pos = {}, word = ""){
+  const run = activeRun(), f = fileById(V.fileId);
+  const w = p ? {...p} : {id: uid(), fileId: V.fileId, hash: f.hash, name: f.name, page: V.page, x: pos.x, y: pos.y, text: word ? word + " " : "", ok: null, at: Date.now(), runId: run ? run.id : null};
+  const pr = w.runId && RUNS.find(r => r.id === w.runId);
+  openSheet(`<h3 style="margin-top:0">측정 메모</h3><div class="muted">${esc(f.name)} · ${w.page}쪽</div>
+    <label class="f">측정값·메모</label><input class="t" id="pText" value="${esc(w.text)}" placeholder="예: 12B47 DC 98V">
+    <div class="chips">${["DC 100V", "DC 0V", "단선", "도통", "저항 ∞"].map(s => `<span class="chip x" data-add="${s}">${s}</span>`).join("")}</div>
+    <div class="row" style="margin-top:10px"><button class="btn ${w.ok === true ? "good" : ""}" id="pOk">✓ 정상</button><button class="btn ${w.ok === false ? "bad" : ""}" id="pNg">✗ 이상</button></div>
+    ${pr || run ? `<label class="row muted" style="margin-top:10px;gap:6px"><input type="checkbox" id="pRun" ${w.runId ? "checked" : ""}> 점검 “${esc((pr || run).title)}”에 함께 기록</label>` : ""}
+    <div class="row" style="margin-top:16px">${p ? '<button class="btn danger" id="pDel">삭제</button>' : ""}<span class="grow"></span>
+      <button class="btn" id="pCancel">취소</button><button class="btn primary" id="pSave">저장</button></div>`);
+  $("#sheetPanel").querySelectorAll("[data-add]").forEach(c => c.onclick = () => { const i = $("#pText"); i.value = (i.value.trim() + " " + c.dataset.add).trim(); i.focus(); });
+  const okBtn = v => { w.ok = w.ok === v ? null : v; $("#pOk").classList.toggle("good", w.ok === true); $("#pNg").classList.toggle("bad", w.ok === false); };
+  $("#pOk").onclick = () => okBtn(true); $("#pNg").onclick = () => okBtn(false);
+  $("#pCancel").onclick = () => history.back();
+  $("#pSave").onclick = async () => {
+    w.text = $("#pText").value.trim();
+    if (!w.text && w.ok == null){ $("#pText").focus(); return toast("측정값이나 메모를 적어 주세요"); }
+    if ($("#pRun")) w.runId = $("#pRun").checked ? (pr || run).id : null;
+    await tx(["pins"], "readwrite", t => t.objectStore("pins").put(w));
+    await loadAll(); history.back(); renderPage();
+  };
+  if (p) $("#pDel").onclick = async () => {
+    await tx(["pins"], "readwrite", t => t.objectStore("pins").delete(p.id));
+    await loadAll(); history.back(); renderPage();
+  };
+  setTimeout(() => { const i = $("#pText"); if (i){ i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }, 50);
+}
+const pinLine = p => `${linkFile(p)?.name || p.name} ${p.page}쪽: ${p.text}${p.ok === true ? " (정상)" : p.ok === false ? " (이상)" : ""}`;
+
+/* 도면 두 장 나란히 보기: 오른쪽 절반에 앱을 한 번 더 띄워(같은 기기 저장소를 함께 씀) 따로 확대·이동한다 */
+const PANE = new URLSearchParams(location.search).get("pane") === "1";
+function openSplit(fileId, page, q){
+  if (!canSplit()){ toast("나란히 보기는 가로로 넓은 화면(탭)에서 돼요"); return jumpTo(fileId, page, q); }
+  let f = $("#split");
+  if (!f){ f = document.createElement("iframe"); f.id = "split"; f.title = "옆 도면"; document.body.appendChild(f); }
+  f.src = `?pane=1&f=${encodeURIComponent(fileId)}&p=${page}&q=${encodeURIComponent(q || "")}`;
+  document.body.classList.add("splitting"); $("#vSplit").textContent = "⧉ 나란히 닫기";
+  renderPage();
+}
+function closeSplit(){
+  if (!document.body.classList.contains("splitting")) return;
+  $("#split").remove(); document.body.classList.remove("splitting"); $("#vSplit").textContent = "⧉ 나란히";
+  if ($("#viewer").classList.contains("open")) renderPage();
+}
+function splitPicker(){
+  const recent = TRAIL.filter(t => !(t.fileId === V.fileId && t.page === V.page)).slice().reverse();
+  openSheet(`<h3 style="margin-top:0">옆에 띄울 도면</h3>
+    ${recent.length ? `<div class="muted">지나온 도면</div><div class="chips">${recent.map(t => `<span class="chip x" data-sp="${t.fileId}|${t.page}">${esc(fileById(t.fileId).name)} · ${t.page}쪽</span>`).join("")}</div>` : ""}
+    <label class="f">도면 고르기</label><div class="row">${pickerHtml("sp", null)}</div>
+    <div class="row" style="margin-top:16px"><span class="grow"></span><button class="btn" id="spCancel">취소</button><button class="btn primary" id="spOpen">옆에 열기</button></div>`);
+  $("#sheetPanel").querySelectorAll("[data-sp]").forEach(c => c.onclick = () => { const [f, p] = c.dataset.sp.split("|"); sheetThen(() => openSplit(f, +p, "")); });
+  $("#spCancel").onclick = () => history.back();
+  $("#spOpen").onclick = () => { const l = pickerRead("sp"); if (!l) return toast("도면을 고르세요"); sheetThen(() => openSplit(l.fileId, l.page, "")); };
+}
+window.addEventListener("message", e => { if (e.origin === location.origin && e.data && e.data.ktx === "closeSplit") closeSplit(); });
+
 /* ---------- 도면 연결: "490.8B" = 490번 도면의 8열 B행 칸 ---------- */
 // 글자 인식이 옆 글자와 붙여 읽거나("12B57NO122.4E") 앞뒤에 잡글자를 붙이는 일이 많아서, 낱말 안 어디에 있든 찾는다.
 // 행 글자 B를 8로 읽는 경우도 많은데, 8 뒤에 숫자가 이어지면 다른 번호의 일부로 본다
 const REF_RE = /(?<![\d.])(\d{2,4})\.(1[0-2]|[1-9])(?:([A-L])|(8)(?!\d))/;
 function parseRef(s){
   const m = (s || "").toUpperCase().match(REF_RE);
-  if (!m) return null;
+  if (!m || (m[4] && m[1].length < 3)) return null;  // "04.18" 같은 날짜 조각은 빼기
   const row = m[3] || "B";
-  return {sheet: +m[1], col: +m[2], row, label: `${+m[1]}.${+m[2]}${row}`};
+  return {sheet: +m[1], col: +m[2], row, label: `${m[1]}.${m[2]}${row}`};
 }
 /* 그 쪽에 있는 연결 표시와 화면 위치 */
 async function pageRefs(page, vp){
@@ -1186,24 +1394,17 @@ function zoneRect(g, col, row){
 async function goRef(r){
   const t = findSheet(r.sheet);
   if (!t){ toast(`${r.sheet}번 도면이 등록돼 있지 않아요`, 3000); return; }
-  const st = $("#stage");
-  V.back = V.back || [];
-  V.back.push({fileId: V.fileId, page: V.page, zoom: V.zoom, sx: st.scrollLeft / st.scrollWidth, sy: st.scrollTop / st.scrollHeight, from: fileById(V.fileId).name});
-  history.pushState({viewer: 1, jump: 1}, "");
-  V.zone = {fileId: t.fileId, page: t.page, col: r.col, row: r.row, label: r.label};
-  await showDoc(t.fileId, t.page, "");
+  await jumpTo(t.fileId, t.page, "", {fileId: t.fileId, page: t.page, col: r.col, row: r.row, label: r.label});
 }
 async function goBackRef(){
   const b = V.back.pop(); V.zone = null;
-  await showDoc(b.fileId, b.page, V.query, b.zoom);
+  await showDoc(b.fileId, b.page, b.query || "", b.zoom);
   const st = $("#stage"); st.scrollLeft = b.sx * st.scrollWidth; st.scrollTop = b.sy * st.scrollHeight;
 }
 /* 연결 표시 상자와, 이동해 온 칸 표시 */
-// 연결 표시 켜기·끄기 (기기에 기억)
-const refsOn = () => { try { return localStorage.getItem("ktx-refs") !== "0"; } catch { return true; } };
 async function drawRefs(page, vp){
   const hl = $("#hl");
-  V.refs = refsOn() ? await pageRefs(page, vp) : [];
+  V.refs = optOn("refs") ? await pageRefs(page, vp) : [];
   for (const r of V.refs){
     const div = document.createElement("div");
     div.className = "xref"; div.dataset.ref = r.label;
@@ -1230,24 +1431,24 @@ function refFoot(){
   let html = "";
   if (b) html += `<div class="row" style="margin-top:6px"><button class="btn sm" id="refBack">← ${esc(b.from)} ${b.page}쪽으로 돌아가기</button>
     ${here ? `<span class="muted">${esc(z.label)} ${z.found ? "칸을 보라색 점선으로 표시했어요" : "칸 위치를 못 찾아서 도면만 열었어요"}</span>` : ""}</div>`;
-  html += `<div class="row" style="margin-top:6px"><label class="muted row" style="gap:4px"><input type="checkbox" id="refsOn" ${refsOn() ? "checked" : ""}> 다른 도면 연결 표시 (눌러서 이동)</label>
-    ${refsOn() && !labels.length ? '<span class="muted">이 쪽에서 찾은 연결 표시 없음</span>' : ""}</div>`;
   if (labels.length) html += `<div class="chips"><span class="muted">다른 도면으로 연결</span> ${labels.map(l => `<span class="chip x ref${findSheet(parseRef(l).sheet) ? "" : " none"}" data-ref="${l}">${l}</span>`).join("")}</div>`;
   return html;
 }
 const pageCases = () => CASES.filter(c => (c.links || []).some(l => linkFile(l)?.id === V.fileId && l.page === V.page)).sort(byDate);
 function renderFoot(){
+  $("#vSplit").hidden = !canSplit() && !document.body.classList.contains("splitting");
   const tg = tagsOf(V.fileId, V.page);
   const hits = document.querySelectorAll("#hl .hit").length, exactHits = document.querySelectorAll("#hl .hit.exact").length;
   const pg = PAGES.find(x => x.fileId === V.fileId && x.page === V.page);
   $("#vFoot").innerHTML = `<div class="row">
       <div class="grow chips" style="margin:0">${tg.length ? tg.map(t => `<span class="chip x" data-t="${t.id}" title="${esc(t.note || "")}">🏷 ${esc(t.label)}</span>`).join("") : '<span class="muted">이 페이지에 태그 없음</span>'}</div>
-      <button class="btn sm" id="addCase">＋ 고장 기록</button><button class="btn sm primary" id="addTag">＋ 태그</button></div>
+      <button class="btn sm ${V.pinMode ? "primary" : ""}" id="pinBtn">${V.pinMode ? "📍 누를 곳 고르는 중 (취소)" : "📍 측정 메모"}</button><button class="btn sm" id="addCase">＋ 고장 기록</button><button class="btn sm primary" id="addTag">＋ 태그</button></div>
     ${pageCases().length ? `<div class="chips"><span class="muted">이 쪽과 연결된 고장 기록</span> ${pageCases().map(c => `<span class="chip x" data-vc="${c.id}">🛠 ${esc(c.symptom)} ${esc(c.date || "")}</span>`).join("")}</div>` : ""}
     <div class="row" style="margin-top:6px">
       <button class="btn sm" id="ocrPage">${pg && pg.ocr ? "이 쪽 다시 인식" : "이 쪽 글자 인식"}</button>
       ${pg && pg.ocr ? `<label class="muted row" style="gap:4px"><input type="checkbox" id="showOcr" ${V.showOcr ? "checked" : ""}> 인식된 글자 ${pg.ocr.words.length}개 표시</label>` : ""}
-      ${pg && pg.ocr && V.showOcr ? '<span class="muted">회색 점선 박스를 누르면 읽은 글자가 보여요</span>' : ""}
+      ${pg && pg.ocr && V.showOcr ? '<span class="muted">회색 점선 박스를 누르면 같은 글자가 나오는 곳을 찾아요</span>' : ""}
+      ${pinsHere().length ? `<span class="muted">측정 메모 ${pinsHere().length}개${optOn("pins") ? "" : " (보기 설정에서 꺼 둠)"}</span>` : ""}
     </div>
     ${refFoot()}
     ${V.query ? `<div class="muted" style="margin-top:6px">“${esc(V.query)}” 이 쪽에 ${hits}곳${hits ? ` (<span class="lg-ex">■</span> 정확히 일치 ${exactHits} · <span class="lg-pt">■</span> 일부 일치 ${hits - exactHits})` : ""}${hits && V.zoom <= 1.01 ? " · 확대하면 해당 위치로 이동" : ""}</div>
@@ -1258,8 +1459,8 @@ function renderFoot(){
   $("#addCase").onclick = () => caseEditor(null, {links: [mkLink(V.fileId, V.page)]});
   $("#vFoot").querySelectorAll("[data-vc]").forEach(c => c.onclick = () => caseEditor(CASES.find(x => x.id === c.dataset.vc)));
   $("#vFoot").querySelectorAll("[data-ref]").forEach(c => c.onclick = () => goRef(parseRef(c.dataset.ref)));
-  if ($("#refBack")) $("#refBack").onclick = () => history.back();
-  $("#refsOn").onchange = e => { try { localStorage.setItem("ktx-refs", e.target.checked ? "1" : "0"); } catch {} renderPage(); };
+  if ($("#refBack")) $("#refBack").onclick = () => PANE ? goBackRef() : history.back();
+  $("#pinBtn").onclick = () => { V.pinMode = !V.pinMode; renderFoot(); if (V.pinMode) toast("도면에서 메모할 곳을 누르세요", 2500); };
   $("#ocrPage").onclick = () => ocrDialog(V.fileId, String(V.page));
   if ($("#showOcr")) $("#showOcr").onchange = e => { V.showOcr = e.target.checked; renderPage(); };
   $("#vFoot").querySelectorAll("[data-t]").forEach(c => c.onclick = () => tagEditor(TAGS.find(t => t.id === c.dataset.t)));
@@ -1303,6 +1504,8 @@ function closeSheet(fromPop){
   if (!$("#sheet").classList.contains("open")) return;
   $("#sheet").classList.remove("open");
   if (!fromPop) history.back();
+  const f = sheetAfter; sheetAfter = null;
+  if (f) setTimeout(f, 0);
 }
 $("#ocrDark").onclick = () => blackout(true);
 $("#sheet").onclick = e => { if (e.target.id === "sheet") history.back(); };
@@ -1317,6 +1520,13 @@ let rTimer; window.addEventListener("resize", () => { clearTimeout(rTimer); rTim
     await loadAll();
   } catch (err){
     $("#tab-search").innerHTML = `<div class="empty">저장공간을 열 수 없습니다.<br><span class="muted">${esc(err.message)}<br>시크릿 모드에서는 사용할 수 없어요.</span></div>`;
+    return;
+  }
+  if (PANE){
+    // 나란히 보기의 오른쪽 칸: 머리글 없이 도면만
+    document.body.classList.add("pane");
+    const q = new URLSearchParams(location.search);
+    if (fileById(q.get("f"))) openViewer(q.get("f"), +q.get("p") || 1, q.get("q") || "");
     return;
   }
   render();
