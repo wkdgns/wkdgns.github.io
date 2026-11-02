@@ -1,0 +1,795 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1f3a5f">
+<title>측정값 판정</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+:root{
+  --bg:#f4f6f9; --card:#ffffff; --ink:#1b2430; --sub:#5b6676; --line:#dde2ea;
+  --accent:#1f5fae; --accent-ink:#ffffff; --chip:#e8eef7; --chip-ink:#1f4f8f;
+  --ok:#1d7a3e; --ok-bg:#e3f4e8; --cau:#9a5b00; --cau-bg:#fff1d6; --bad:#c0362c; --bad-bg:#fde6e3;
+  --warn:#a15c00; --warn-bg:#fff4e0; --danger:#c0362c;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#12161c; --card:#1c222b; --ink:#e7ebf0; --sub:#9aa5b4; --line:#2c3440;
+    --accent:#5b9bf0; --accent-ink:#0d1520; --chip:#24324a; --chip-ink:#a9c8f5;
+    --ok:#5fd38a; --ok-bg:#163223; --cau:#f3bb55; --cau-bg:#3a2c10; --bad:#ff7b70; --bad-bg:#3d1916;
+    --warn:#f0b35a; --warn-bg:#33270f; --danger:#ff7b70;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#12161c; --card:#1c222b; --ink:#e7ebf0; --sub:#9aa5b4; --line:#2c3440;
+  --accent:#5b9bf0; --accent-ink:#0d1520; --chip:#24324a; --chip-ink:#a9c8f5;
+  --ok:#5fd38a; --ok-bg:#163223; --cau:#f3bb55; --cau-bg:#3a2c10; --bad:#ff7b70; --bad-bg:#3d1916;
+  --warn:#f0b35a; --warn-bg:#33270f; --danger:#ff7b70;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,"Noto Sans KR","Malgun Gothic",sans-serif;font-size:16px;-webkit-tap-highlight-color:transparent;word-break:keep-all}
+button,input,select,textarea{font:inherit;color:inherit}
+header{position:sticky;top:0;z-index:5;background:var(--card);border-bottom:1px solid var(--line);padding:10px 16px 0}
+.top{display:flex;align-items:center;gap:8px;max-width:900px;margin:0 auto}
+.top h1{font-size:18px;margin:0;flex:1;white-space:nowrap}
+.tabs{display:flex;max-width:900px;margin:8px auto 0}
+.tabs button{flex:1;padding:10px 4px;border:0;background:none;border-bottom:3px solid transparent;color:var(--sub);font-weight:600;position:relative}
+.tabs button.on{color:var(--accent);border-color:var(--accent)}
+.tabs .dot{display:inline-block;min-width:18px;padding:0 5px;border-radius:9px;background:var(--danger);color:#fff;font-size:11px;line-height:18px;margin-left:4px;vertical-align:1px}
+main{max-width:900px;margin:0 auto;padding:12px 16px 90px}
+.btn{padding:10px 14px;border-radius:10px;border:1px solid var(--line);background:var(--card);font-weight:600;cursor:pointer;white-space:nowrap}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.btn.danger{color:var(--danger)}
+.btn.sm{padding:6px 10px;font-size:14px}
+.btn.on{background:var(--chip);color:var(--chip-ink);border-color:var(--chip-ink)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:10px}
+.click{cursor:pointer}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.chip{background:var(--chip);color:var(--chip-ink);border-radius:999px;padding:4px 11px;font-size:13px;font-weight:600;border:0;cursor:pointer}
+.chip.on{background:var(--accent);color:var(--accent-ink)}
+.muted{color:var(--sub);font-size:14px}
+.warn{background:var(--warn-bg);color:var(--warn);border-radius:8px;padding:8px 10px;font-size:14px;margin-top:8px;line-height:1.5}
+.empty{text-align:center;color:var(--sub);padding:36px 10px;line-height:1.7}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.grow{flex:1;min-width:0}
+label.f{display:block;font-size:14px;color:var(--sub);margin:12px 0 4px}
+input.t,textarea.t,select.t{width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg);font-size:17px}
+textarea.t{font-size:15px;min-height:70px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+@media (min-width:720px){ .wide2{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start} }
+h2{font-size:17px;margin:16px 0 8px}
+h3{font-size:15px;margin:12px 0 6px}
+.it-name{font-weight:700}
+.std{font-size:14px;color:var(--sub);margin-top:4px;line-height:1.5}
+.verdict{border-radius:14px;padding:16px;text-align:center;margin-top:12px;border:2px solid transparent}
+.verdict .big{font-size:34px;font-weight:800;letter-spacing:2px}
+.verdict .val{font-size:18px;font-weight:700;margin-top:4px}
+.verdict .why{font-size:14px;margin-top:6px;line-height:1.5}
+.v-ok{background:var(--ok-bg);color:var(--ok);border-color:var(--ok)}
+.v-cau{background:var(--cau-bg);color:var(--cau);border-color:var(--cau)}
+.v-bad{background:var(--bad-bg);color:var(--bad);border-color:var(--bad)}
+.v-none{background:var(--chip);color:var(--sub)}
+.tag{display:inline-block;border-radius:6px;padding:1px 8px;font-size:13px;font-weight:700;white-space:nowrap}
+.tag.ok{background:var(--ok-bg);color:var(--ok)}
+.tag.cau{background:var(--cau-bg);color:var(--cau)}
+.tag.bad{background:var(--bad-bg);color:var(--bad)}
+.tag.rev{background:var(--warn-bg);color:var(--warn)}
+.inrow{display:flex;gap:6px}
+.inrow input{flex:1;min-width:0}
+.quote{border-left:3px solid var(--line);padding:4px 10px;color:var(--sub);font-size:14px;white-space:pre-wrap;margin-top:6px}
+table.rec{width:100%;border-collapse:collapse;font-size:14px}
+table.rec td,table.rec th{padding:7px 4px;border-bottom:1px solid var(--line);text-align:left}
+table.rec th{color:var(--sub);font-weight:600}
+.num{font-variant-numeric:tabular-nums;white-space:nowrap}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:20;display:flex;align-items:flex-end;justify-content:center}
+.modal>.sheet{background:var(--card);width:100%;max-width:720px;max-height:92vh;overflow:auto;border-radius:16px 16px 0 0;padding:16px 16px 28px}
+@media (min-width:720px){ .modal{align-items:center} .modal>.sheet{border-radius:16px} }
+.sheet-head{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.sheet-head h2{margin:0;flex:1}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#222c;color:#fff;padding:10px 16px;border-radius:10px;z-index:30;font-size:15px;max-width:90vw;text-align:center}
+.formula{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;color:var(--sub);background:var(--bg);border-radius:6px;padding:6px 8px;margin-top:6px;white-space:pre-wrap}
+svg.trend{width:100%;height:auto;display:block}
+.hint{font-size:13px;color:var(--sub);margin-top:4px;line-height:1.5}
+details summary{cursor:pointer;color:var(--accent);font-weight:600;padding:6px 0}
+</style>
+</head>
+<body>
+<header>
+  <div class="top"><h1>⚡ 측정값 판정</h1><span class="muted" id="offline"></span></div>
+  <nav class="tabs" id="tabs">
+    <button data-tab="measure" class="on">측정</button>
+    <button data-tab="records">기록</button>
+    <button data-tab="calc">계산기</button>
+    <button data-tab="items">기준값</button>
+  </nav>
+</header>
+<main id="main"></main>
+<input type="file" id="filein" accept=".json,application/json" hidden>
+
+<script>
+"use strict";
+/* ===== 기본 도구 ===== */
+const $ = (s, el = document) => el.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
+const today = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); };
+const num = s => {
+  if (s === null || s === undefined) return NaN;
+  const t = String(s).trim().replace(/,/g, ".").replace(/\s/g, "");
+  if (t === "") return NaN;
+  if (/^(ol|∞|inf|무한대?)$/i.test(t)) return Infinity;
+  return Number(t);
+};
+const has = v => v !== null && v !== undefined && v !== "" && !Number.isNaN(Number(v));
+function fmt(v, d){
+  if (v === Infinity) return "∞ (OL)";
+  if (v === -Infinity) return "-∞";
+  if (!Number.isFinite(v)) return "-";
+  if (d !== undefined) return v.toFixed(d);
+  const a = Math.abs(v);
+  if (a === 0) return "0";
+  if (a >= 1000) return (Math.round(v * 10) / 10).toLocaleString("ko-KR");
+  return String(Number(v.toPrecision(4)));
+}
+function toast(msg){ const t = document.createElement("div"); t.className = "toast"; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), 2600); }
+const ls = { get(k, d){ try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+             set(k, v){ try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
+
+/* ===== 기기 안 저장소 (IndexedDB) — 밖으로 보내는 기능 없음 ===== */
+const DB = { db: null,
+  open(){ return new Promise((res, rej) => {
+    const r = indexedDB.open("ktx-meas", 1);
+    r.onupgradeneeded = () => { const d = r.result;
+      if (!d.objectStoreNames.contains("items")) d.createObjectStore("items", {keyPath: "id"});
+      if (!d.objectStoreNames.contains("records")) d.createObjectStore("records", {keyPath: "id"}).createIndex("itemId", "itemId");
+      if (!d.objectStoreNames.contains("meta")) d.createObjectStore("meta", {keyPath: "k"});
+    };
+    r.onsuccess = () => { DB.db = r.result; res(); };
+    r.onerror = () => rej(r.error);
+  }); },
+  tx(store, mode, fn){ return new Promise((res, rej) => { const t = DB.db.transaction(store, mode); const s = t.objectStore(store); const out = fn(s); t.oncomplete = () => res(out && out.result !== undefined ? out.result : out); t.onerror = () => rej(t.error); }); },
+  all(store){ return new Promise((res, rej) => { const r = DB.db.transaction(store).objectStore(store).getAll(); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }); },
+  put(store, v){ return DB.tx(store, "readwrite", s => { s.put(v); }); },
+  putMany(store, arr){ return DB.tx(store, "readwrite", s => { arr.forEach(v => s.put(v)); }); },
+  del(store, id){ return DB.tx(store, "readwrite", s => { s.delete(id); }); },
+  delMany(store, ids){ return DB.tx(store, "readwrite", s => { ids.forEach(id => s.delete(id)); }); },
+  clear(store){ return DB.tx(store, "readwrite", s => { s.clear(); }); },
+};
+
+/* ===== 측정 방법(판정 공식) ===== */
+const METHODS = {
+  direct:    {name: "측정값 그대로 판정", short: "그대로", hint: "읽은 값을 기준 범위와 바로 비교합니다."},
+  ir_temp:   {name: "절연저항 + 온도 보정", short: "온도 보정", hint: "측정할 때 온도를 넣으면 기준 온도 값으로 바꿔서 판정합니다. 기본은 온도가 10℃ 오를 때마다 절연저항이 절반이 되는 규칙입니다."},
+  deviation: {name: "기준값과 차이(%) 판정", short: "기준 대비 %", hint: "코일 저항처럼 '기준값 ±10%' 식으로 정해진 항목. 기준 범위는 % 로 넣습니다."},
+  vdrop:     {name: "전압강하(%) 판정", short: "전압강하", hint: "공급 쪽 전압과 부하 쪽 전압을 넣으면 강하율(%)로 판정합니다. 기준 범위는 % 로 넣습니다."},
+  imbalance: {name: "상간 불평형(%) 판정", short: "불평형", hint: "U·V·W 처럼 여러 값을 넣으면 (최대−최소)÷평균 으로 불평형률을 구해 판정합니다. 기준 범위는 % 로 넣습니다."},
+  contact:   {name: "단선·접촉불량 (저항)", short: "단선/접촉", hint: "선이나 접점 저항을 재서 정상 저항과 비교합니다. OL(무한대)이면 단선, 정상보다 많이 높으면 접촉불량 의심입니다."},
+};
+const resultUnit = it => (["deviation", "vdrop", "imbalance"].includes(it.method) ? "%" : (it.unit || ""));
+
+function bandText(b, u){
+  if (!b) return "";
+  const mn = has(b.min), mx = has(b.max); u = u ? " " + u : "";
+  if (mn && mx) return `${fmt(+b.min)} ~ ${fmt(+b.max)}${u}`;
+  if (mn) return `${fmt(+b.min)}${u} 이상`;
+  if (mx) return `${fmt(+b.max)}${u} 이하`;
+  return "";
+}
+const inBand = (v, b) => b && (has(b.min) || has(b.max)) && (!has(b.min) || v >= +b.min) && (!has(b.max) || v <= +b.max);
+function stdText(it){
+  const u = resultUnit(it); const n = bandText(it.normal, u); const c = bandText(it.caution, u);
+  let s = n ? `정상 ${n}` : "기준값 없음";
+  if (c) s += ` · 주의 ${c}`;
+  return s;
+}
+
+/* 입력값 → 계산값, 판정 */
+function evaluate(it, inp){
+  const p = it.params || {}; const u = resultUnit(it); let v, detail = "", extra = {};
+  switch (it.method){
+    case "ir_temp": {
+      const r = num(inp.r), t = num(inp.temp);
+      if (!Number.isFinite(r) && r !== Infinity) return null;
+      const ref = has(p.refTemp) ? +p.refTemp : 20, step = has(p.halveEvery) ? +p.halveEvery : 10;
+      if (Number.isFinite(t) && r !== Infinity){ v = r * Math.pow(2, (t - ref) / step); detail = `${fmt(r)} ${it.unit||""} (${fmt(t)}℃에서) → ${ref}℃ 환산 ${fmt(v)} ${it.unit||""}`; }
+      else { v = r; detail = r === Infinity ? "무한대(OL) — 보정 없이 판정" : "온도를 안 넣어서 보정 없이 판정"; }
+      break; }
+    case "deviation": {
+      const x = num(inp.x), ref = num(p.ref);
+      if (!Number.isFinite(x) || !Number.isFinite(ref) || ref === 0) return null;
+      v = (x - ref) / ref * 100; detail = `측정 ${fmt(x)} ${it.unit||""} / 기준 ${fmt(ref)} ${it.unit||""} → 차이 ${v >= 0 ? "+" : ""}${fmt(v, 1)}%`;
+      break; }
+    case "vdrop": {
+      const vs = num(inp.vs), ve = num(inp.ve);
+      if (!Number.isFinite(vs) || !Number.isFinite(ve)) return null;
+      const base = has(p.nominal) ? +p.nominal : vs; if (!base) return null;
+      v = (vs - ve) / base * 100; extra.dropV = vs - ve;
+      detail = `강하 ${fmt(vs - ve)} V ÷ ${has(p.nominal) ? "정격 " : "공급 "}${fmt(base)} V = ${fmt(v, 2)}%`;
+      break; }
+    case "imbalance": {
+      const labels = phaseLabels(it); const xs = labels.map((_, i) => num((inp.ph || [])[i]));
+      if (xs.some(x => !Number.isFinite(x))) return null;
+      const avg = xs.reduce((a, b) => a + b, 0) / xs.length; if (!avg) return null;
+      v = (Math.max(...xs) - Math.min(...xs)) / avg * 100;
+      detail = `최대 ${fmt(Math.max(...xs))} · 최소 ${fmt(Math.min(...xs))} · 평균 ${fmt(avg)} ${it.unit||""} → 불평형 ${fmt(v, 2)}%`;
+      break; }
+    case "contact": {
+      const r = num(inp.r), lead = has(inp.lead) ? num(inp.lead) : 0;
+      if (r === Infinity) return {value: Infinity, unit: u, verdict: "bad", label: "단선", detail: "OL(무한대) — 단선입니다", inputs: inp};
+      if (!Number.isFinite(r)) return null;
+      v = r - (Number.isFinite(lead) ? lead : 0);
+      detail = lead ? `측정 ${fmt(r)} − 리드선 ${fmt(lead)} = ${fmt(v)} ${it.unit||"Ω"}` : "";
+      break; }
+    default: {
+      const x = num(inp.x); if (Number.isNaN(x)) return null; v = x;
+    }
+  }
+  let verdict = "none", label = "기준 없음";
+  const hasN = it.normal && (has(it.normal.min) || has(it.normal.max));
+  if (hasN){
+    if (inBand(v, it.normal)){ verdict = "ok"; label = "정상"; }
+    else if (inBand(v, it.caution)){ verdict = "cau"; label = "주의"; }
+    else { verdict = "bad"; label = "이상"; }
+    if (it.method === "contact" && verdict !== "ok"){
+      const hi = has(it.normal.max) && v > +it.normal.max, lo = has(it.normal.min) && v < +it.normal.min;
+      if (hi) label = verdict === "cau" ? "주의 (접촉 확인)" : "접촉불량 의심";
+      else if (lo) label = verdict === "cau" ? "주의 (낮음)" : "단락 의심";
+    }
+  }
+  return {value: v, unit: u, verdict, label, detail, inputs: inp, ...extra};
+}
+const phaseLabels = it => { const s = (it.params && it.params.phases) || "U,V,W"; const a = String(s).split(/[,\s/]+/).filter(Boolean); return a.length >= 2 ? a : ["U", "V", "W"]; };
+function whyText(it, r){
+  if (r.verdict === "none") return "이 항목에 정상 범위가 아직 없어요. 기준값 탭에서 넣어 주세요.";
+  if (r.label === "단선") return "선이 끊겼거나 접점이 완전히 떨어져 있습니다.";
+  const u = resultUnit(it);
+  if (r.verdict === "ok") return `정상 범위(${bandText(it.normal, u)}) 안입니다.`;
+  if (r.verdict === "cau") return `정상 범위(${bandText(it.normal, u)})는 벗어났지만 주의 범위(${bandText(it.caution, u)}) 안입니다.`;
+  return `정상 범위(${bandText(it.normal, u)})${has(it.caution?.min) || has(it.caution?.max) ? "와 주의 범위(" + bandText(it.caution, u) + ")" : ""}를 벗어났습니다.`;
+}
+
+/* ===== 상태 ===== */
+const S = { items: [], records: [], tab: "measure", cur: null, inp: {}, recFilter: {}, itemFilter: "", itemGroup: "", measGroup: "", measQ: "" };
+async function loadAll(){ S.items = await DB.all("items"); S.records = await DB.all("records"); S.items.sort(byItem); }
+const byItem = (a, b) => (a.group || "").localeCompare(b.group || "", "ko") || (a.name || "").localeCompare(b.name || "", "ko");
+const itemById = id => S.items.find(i => i.id === id);
+const groups = () => [...new Set(S.items.map(i => i.group || "기타"))].sort((a, b) => a.localeCompare(b, "ko"));
+const unreviewed = () => S.items.filter(i => !i.reviewed).length;
+
+function setTab(t){ S.tab = t; document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === t)); render(); window.scrollTo(0, 0); }
+document.getElementById("tabs").addEventListener("click", e => { const b = e.target.closest("button"); if (b) setTab(b.dataset.tab); });
+function render(){
+  const n = unreviewed(); const tb = document.querySelector('#tabs [data-tab="items"]');
+  tb.innerHTML = "기준값" + (n ? `<span class="dot">${n}</span>` : "");
+  ({measure: renderMeasure, records: renderRecords, calc: renderCalc, items: renderItems})[S.tab]();
+}
+
+/* ===== 측정 탭 ===== */
+function renderMeasure(){
+  const m = $("#main");
+  if (!S.items.length){
+    m.innerHTML = `<div class="empty">아직 측정 항목이 없어요.<br><br>
+      <b>기준값</b> 탭에서 매뉴얼 기준값 파일을 불러오거나<br>직접 항목을 추가해 주세요.<br><br>
+      <button class="btn primary" id="goItems">기준값 탭으로</button><br><br>
+      <button class="btn sm" id="addEx">연습용 예시 항목 넣어 보기</button></div>`;
+    $("#goItems").onclick = () => setTab("items"); $("#addEx").onclick = addExamples; return;
+  }
+  if (S.cur && itemById(S.cur)) return renderMeasureForm();
+  const gs = groups(); const q = S.measQ.trim().toLowerCase();
+  const list = S.items.filter(i => (!S.measGroup || (i.group || "기타") === S.measGroup) && (!q || (i.name + " " + (i.group || "") + " " + (i.points || []).join(" ")).toLowerCase().includes(q)));
+  const recent = ls.get("meas-recent", []).map(itemById).filter(Boolean).slice(0, 6);
+  m.innerHTML = `
+    <input class="t" id="mq" placeholder="측정 항목 찾기 (예: 절연, 견인전동기)" value="${esc(S.measQ)}">
+    ${recent.length && !q ? `<div class="muted" style="margin-top:12px">최근에 쓴 항목</div><div class="chips">${recent.map(i => `<button class="chip" data-pick="${i.id}">${esc(i.name)}</button>`).join("")}</div>` : ""}
+    <div class="chips" style="margin-top:12px"><button class="chip ${S.measGroup ? "" : "on"}" data-g="">전체</button>${gs.map(g => `<button class="chip ${S.measGroup === g ? "on" : ""}" data-g="${esc(g)}">${esc(g)}</button>`).join("")}</div>
+    <div style="margin-top:12px">${list.map(i => `<div class="card click" data-pick="${i.id}">
+      <div class="row"><span class="it-name grow">${esc(i.name)}</span>${i.reviewed ? "" : `<span class="tag rev">확인 전</span>`}</div>
+      <div class="std">${esc(i.group || "기타")} · ${METHODS[i.method]?.short || ""} · ${esc(stdText(i))}</div></div>`).join("") || `<div class="empty">찾는 항목이 없어요.</div>`}</div>`;
+  const mq = $("#mq"); mq.oninput = () => { S.measQ = mq.value; const pos = mq.selectionStart; renderMeasure(); const n = $("#mq"); n.focus(); n.setSelectionRange(pos, pos); };
+  m.querySelectorAll("[data-g]").forEach(b => b.onclick = () => { S.measGroup = b.dataset.g; renderMeasure(); });
+  m.querySelectorAll("[data-pick]").forEach(b => b.onclick = () => pickItem(b.dataset.pick));
+}
+function pickItem(id){
+  S.cur = id; const it = itemById(id);
+  const lastCar = ls.get("meas-car", ""); const lastPt = (ls.get("meas-pt", {}))[id] || "";
+  S.inp = {car: lastCar, point: lastPt || (it.points && it.points[0]) || "", date: today(), memo: ""};
+  const r = ls.get("meas-recent", []).filter(x => x !== id); r.unshift(id); ls.set("meas-recent", r.slice(0, 10));
+  renderMeasure(); window.scrollTo(0, 0);
+}
+function inputFields(it, inp, pre){
+  const u = esc(it.unit || ""); const p = it.params || {};
+  const numIn = (k, label, ph, ol) => `<label class="f">${label}</label><div class="inrow"><input class="t" inputmode="decimal" id="${pre}${k}" data-k="${k}" placeholder="${esc(ph || "")}" value="${esc(inp[k] ?? "")}" autocomplete="off">${ol ? `<button class="btn" data-ol="${k}" type="button">OL</button>` : ""}</div>`;
+  switch (it.method){
+    case "ir_temp": return numIn("r", `절연저항 (${u || "MΩ"})`, "측정값", true) + numIn("temp", `측정할 때 온도 (℃) — 기준 ${has(p.refTemp) ? p.refTemp : 20}℃로 환산`, "예: 28");
+    case "deviation": return numIn("x", `측정값 (${u})`, `기준 ${has(p.ref) ? fmt(+p.ref) : "?"} ${it.unit||""}`);
+    case "vdrop": return `<div class="grid2"><div>${numIn("vs", "공급 쪽 전압 (V)", "예: 100")}</div><div>${numIn("ve", "부하 쪽 전압 (V)", "예: 96")}</div></div>`;
+    case "imbalance": return `<label class="f">각 상 측정값 (${u})</label><div class="grid3">${phaseLabels(it).map((l, i) => `<div><div class="muted">${esc(l)}</div><input class="t" inputmode="decimal" id="${pre}ph${i}" data-ph="${i}" value="${esc((inp.ph || [])[i] ?? "")}" autocomplete="off"></div>`).join("")}</div>`;
+    case "contact": return numIn("r", `측정 저항 (${u || "Ω"})`, "끊겼으면 OL", true) + numIn("lead", "리드선 저항 (Ω, 선택)", "측정기 리드끼리 맞대고 잰 값");
+    default: return numIn("x", `측정값 ${u ? "(" + u + ")" : ""}`, "측정값", it.unit && /Ω/.test(it.unit));
+  }
+}
+function bindInputs(root, inp, onChange){
+  root.querySelectorAll("[data-k]").forEach(el => el.oninput = () => { inp[el.dataset.k] = el.value; onChange(); });
+  root.querySelectorAll("[data-ph]").forEach(el => el.oninput = () => { (inp.ph = inp.ph || [])[+el.dataset.ph] = el.value; onChange(); });
+  root.querySelectorAll("[data-ol]").forEach(b => b.onclick = () => { const k = b.dataset.ol; inp[k] = "OL"; const el = root.querySelector(`[data-k="${k}"]`); if (el) el.value = "OL"; onChange(); });
+}
+function verdictHTML(it, r){
+  if (!r) return `<div class="verdict v-none"><div class="why">값을 넣으면 바로 판정합니다.</div></div>`;
+  const cls = {ok: "v-ok", cau: "v-cau", bad: "v-bad", none: "v-none"}[r.verdict];
+  const icon = {ok: "✔ ", cau: "⚠ ", bad: "✖ ", none: ""}[r.verdict];
+  const shown = r.value === Infinity ? "∞ (OL)" : `${["deviation"].includes(it.method) && r.value >= 0 ? "+" : ""}${fmt(r.value, ["vdrop", "imbalance", "deviation"].includes(it.method) ? 2 : undefined)} ${esc(r.unit)}`;
+  return `<div class="verdict ${cls}"><div class="big">${icon}${esc(r.label)}</div><div class="val">${shown}</div>
+    ${r.detail ? `<div class="why">${esc(r.detail)}</div>` : ""}<div class="why">${esc(whyText(it, r))}</div></div>`;
+}
+function prevRecord(itemId, car, point, beforeId){
+  return S.records.filter(r => r.itemId === itemId && (r.car || "") === (car || "") && (r.point || "") === (point || "") && r.id !== beforeId)
+    .sort((a, b) => (b.date + b.ts).localeCompare(a.date + a.ts))[0];
+}
+function compareHTML(it, r, car, point){
+  const p = prevRecord(it.id, car, point); if (!p) return "";
+  let s = `지난번 (${esc(p.date)}): <b>${esc(fmt(p.value))} ${esc(p.unit)}</b> <span class="tag ${p.verdict}">${esc(p.label)}</span>`;
+  if (r && Number.isFinite(r.value) && Number.isFinite(p.value) && p.value !== 0 && !["deviation", "vdrop", "imbalance"].includes(it.method)){
+    const ch = (r.value - p.value) / Math.abs(p.value) * 100;
+    s += ` → 이번 ${ch >= 0 ? "+" : ""}${fmt(ch, 1)}%`;
+    if (Math.abs(ch) >= 30) s += `<div class="warn">지난번보다 ${Math.abs(ch) >= 50 ? "크게 " : ""}${ch > 0 ? "올랐어요" : "떨어졌어요"}. 판정이 정상이어도 한 번 더 확인해 보세요.</div>`;
+  }
+  return `<div class="card" style="margin-top:10px">${s}</div>`;
+}
+function renderMeasureForm(){
+  const it = itemById(S.cur); const inp = S.inp; const m = $("#main");
+  const cars = [...new Set(S.records.map(r => r.car).filter(Boolean))].slice(-30).reverse();
+  const pts = [...new Set([...(it.points || []), ...S.records.filter(r => r.itemId === it.id).map(r => r.point).filter(Boolean)])];
+  m.innerHTML = `
+    <div class="row"><button class="btn sm" id="back">← 항목 목록</button><span class="grow"></span><button class="btn sm" id="editIt">기준값 보기·고치기</button></div>
+    <div class="card" style="margin-top:10px">
+      <div class="row"><span class="it-name grow" style="font-size:18px">${esc(it.name)}</span>${it.reviewed ? "" : `<span class="tag rev">확인 전</span>`}</div>
+      <div class="std">${esc(it.group || "기타")} · ${esc(METHODS[it.method]?.name || "")}</div>
+      <div class="std"><b>${esc(stdText(it))}</b></div>
+      ${it.method === "deviation" ? `<div class="std">기준값 ${esc(fmt(+it.params?.ref))} ${esc(it.unit || "")}</div>` : ""}
+      ${it.condition ? `<div class="std">측정 조건: ${esc(it.condition)}</div>` : ""}
+      ${it.source?.doc ? `<div class="std">출처: ${esc(it.source.doc)}${it.source.page ? " " + esc(it.source.page) + "쪽" : ""}</div>` : ""}
+      ${it.reviewed ? "" : `<div class="warn">이 기준값은 아직 매뉴얼과 맞는지 확인하지 않았어요. 판정은 참고만 하고, 기준값 탭에서 확인해 주세요.</div>`}
+    </div>
+    <div class="wide2"><div>
+      <div class="grid2">
+        <div><label class="f">차량 번호</label><input class="t" id="car" list="carList" value="${esc(inp.car)}" placeholder="예: 12편성 3호차"><datalist id="carList">${cars.map(c => `<option value="${esc(c)}">`).join("")}</datalist></div>
+        <div><label class="f">측정 날짜</label><input class="t" type="date" id="date" value="${esc(inp.date)}"></div>
+      </div>
+      <label class="f">측정 위치</label><input class="t" id="point" list="ptList" value="${esc(inp.point)}" placeholder="예: 1번 견인전동기"><datalist id="ptList">${pts.map(c => `<option value="${esc(c)}">`).join("")}</datalist>
+      ${pts.length ? `<div class="chips">${pts.slice(0, 12).map(p => `<button class="chip ${p === inp.point ? "on" : ""}" data-pt="${esc(p)}">${esc(p)}</button>`).join("")}</div>` : ""}
+      <div id="ins">${inputFields(it, inp, "m_")}</div>
+      <label class="f">메모 (선택)</label><input class="t" id="memo" value="${esc(inp.memo)}" placeholder="예: 비 온 뒤, 측정기 2번">
+    </div><div>
+      <div id="vd"></div><div id="cmp"></div>
+      <button class="btn primary" id="save" style="width:100%;margin-top:12px;padding:14px">기록 저장</button>
+    </div></div>`;
+  const upd = () => { const r = evaluate(it, inp); $("#vd").innerHTML = verdictHTML(it, r); $("#cmp").innerHTML = compareHTML(it, r, inp.car.trim(), inp.point.trim()); return r; };
+  bindInputs($("#ins"), inp, upd);
+  ["car", "date", "point", "memo"].forEach(k => $("#" + k).oninput = () => { inp[k] = $("#" + k).value; if (k !== "memo") upd(); });
+  m.querySelectorAll("[data-pt]").forEach(b => b.onclick = () => { inp.point = b.dataset.pt; $("#point").value = inp.point; m.querySelectorAll("[data-pt]").forEach(x => x.classList.toggle("on", x === b)); upd(); });
+  $("#back").onclick = () => { S.cur = null; renderMeasure(); };
+  $("#editIt").onclick = () => editItem(it);
+  $("#save").onclick = async () => {
+    const r = upd(); if (!r) return toast("측정값을 먼저 넣어 주세요");
+    const rec = {id: uid(), itemId: it.id, itemName: it.name, group: it.group || "", car: inp.car.trim(), point: inp.point.trim(), date: inp.date || today(), ts: new Date().toISOString(),
+      inputs: JSON.parse(JSON.stringify(inp)), value: r.value === Infinity ? Infinity : r.value, unit: r.unit, verdict: r.verdict, label: r.label, detail: r.detail || "",
+      std: stdText(it), reviewedStd: !!it.reviewed, memo: inp.memo.trim()};
+    delete rec.inputs.car; delete rec.inputs.point; delete rec.inputs.date; delete rec.inputs.memo;
+    await DB.put("records", serRec(rec)); S.records.push(rec);
+    ls.set("meas-car", rec.car); const pm = ls.get("meas-pt", {}); pm[it.id] = rec.point; ls.set("meas-pt", pm);
+    toast(`저장했어요 · ${r.label}`);
+    // 같은 항목 다음 측정: 값만 비우고 위치는 다음 것으로
+    const keep = {car: inp.car, date: inp.date, memo: "", point: inp.point};
+    if (it.points && it.points.length){ const i = it.points.indexOf(inp.point); if (i >= 0 && i < it.points.length - 1) keep.point = it.points[i + 1]; }
+    S.inp = keep; renderMeasureForm();
+    const first = $("#ins input"); if (first) first.focus();
+  };
+  upd();
+}
+// IndexedDB 는 Infinity 를 그대로 저장하므로 별도 변환 없음. JSON 내보낼 때만 "OL" 로 바꾼다.
+const serRec = r => r;
+
+/* ===== 기록 탭 ===== */
+function renderRecords(){
+  const m = $("#main"); const f = S.recFilter;
+  if (!S.records.length){ m.innerHTML = `<div class="empty">아직 저장한 기록이 없어요.<br>측정 탭에서 값을 넣고 <b>기록 저장</b>을 누르면 여기에 쌓입니다.</div>`; return; }
+  const items = [...new Set(S.records.map(r => r.itemId))].map(id => ({id, name: (itemById(id) || {}).name || (S.records.find(r => r.itemId === id) || {}).itemName}));
+  const cars = [...new Set(S.records.map(r => r.car).filter(Boolean))].sort((a, b) => a.localeCompare(b, "ko", {numeric: true}));
+  let list = S.records.filter(r => (!f.item || r.itemId === f.item) && (!f.car || r.car === f.car) && (!f.v || r.verdict === f.v));
+  // 같은 항목·차량·위치끼리 묶어서 추이를 본다
+  const key = r => r.itemId + "|" + (r.car || "") + "|" + (r.point || "");
+  const gmap = new Map(); list.forEach(r => { const k = key(r); if (!gmap.has(k)) gmap.set(k, []); gmap.get(k).push(r); });
+  const gl = [...gmap.values()].map(a => a.sort((x, y) => (x.date + x.ts).localeCompare(y.date + y.ts))).sort((a, b) => (b.at(-1).date + b.at(-1).ts).localeCompare(a.at(-1).date + a.at(-1).ts));
+  const cnt = v => list.filter(r => r.verdict === v).length;
+  m.innerHTML = `
+    <div class="grid2">
+      <select class="t" id="fItem"><option value="">모든 항목</option>${items.map(i => `<option value="${i.id}" ${f.item === i.id ? "selected" : ""}>${esc(i.name)}</option>`).join("")}</select>
+      <select class="t" id="fCar"><option value="">모든 차량</option>${cars.map(c => `<option ${f.car === c ? "selected" : ""}>${esc(c)}</option>`).join("")}</select>
+    </div>
+    <div class="chips" style="margin-top:8px">
+      <button class="chip ${!f.v ? "on" : ""}" data-v="">전체 ${list.length}</button>
+      <button class="chip ${f.v === "bad" ? "on" : ""}" data-v="bad">이상 ${S.records.filter(r => r.verdict === "bad" && (!f.item || r.itemId === f.item) && (!f.car || r.car === f.car)).length}</button>
+      <button class="chip ${f.v === "cau" ? "on" : ""}" data-v="cau">주의 ${S.records.filter(r => r.verdict === "cau" && (!f.item || r.itemId === f.item) && (!f.car || r.car === f.car)).length}</button>
+      <span class="grow"></span><button class="btn sm" id="csv">엑셀(CSV)로 내보내기</button>
+    </div>
+    <div class="muted" style="margin:10px 0 6px">같은 항목·차량·위치끼리 묶었어요. 누르면 추이 그래프가 나옵니다.</div>
+    ${gl.map(a => { const l = a.at(-1); const nm = (itemById(l.itemId) || {}).name || l.itemName;
+      return `<div class="card click" data-grp="${esc(key(l))}">
+      <div class="row"><span class="it-name grow">${esc(nm)}</span><span class="tag ${l.verdict}">${esc(l.label)}</span></div>
+      <div class="std">${esc(l.car || "차량 미입력")}${l.point ? " · " + esc(l.point) : ""} · ${a.length}회 · 최근 ${esc(l.date)} <b class="num">${esc(fmt(l.value))} ${esc(l.unit)}</b></div>
+      ${a.length > 1 ? spark(a) : ""}</div>`; }).join("") || `<div class="empty">조건에 맞는 기록이 없어요.</div>`}`;
+  $("#fItem").onchange = e => { f.item = e.target.value; renderRecords(); };
+  $("#fCar").onchange = e => { f.car = e.target.value; renderRecords(); };
+  m.querySelectorAll("[data-v]").forEach(b => b.onclick = () => { f.v = b.dataset.v; renderRecords(); });
+  m.querySelectorAll("[data-grp]").forEach(b => b.onclick = () => openGroup(b.dataset.grp));
+  $("#csv").onclick = () => exportCSV(list);
+}
+const vColor = v => getComputedStyle(document.documentElement).getPropertyValue({ok: "--ok", cau: "--cau", bad: "--bad"}[v] || "--sub").trim();
+function spark(a){
+  const vs = a.map(r => r.value).filter(Number.isFinite); if (vs.length < 2) return "";
+  const W = 300, H = 36, mn = Math.min(...vs), mx = Math.max(...vs), sp = mx - mn || 1;
+  const pts = a.map((r, i) => Number.isFinite(r.value) ? [i / (a.length - 1) * (W - 8) + 4, H - 4 - (r.value - mn) / sp * (H - 8), r.verdict] : null).filter(Boolean);
+  return `<svg class="trend" viewBox="0 0 ${W} ${H}" style="max-width:300px;margin-top:6px" aria-hidden="true"><polyline fill="none" stroke="var(--sub)" stroke-width="1.5" points="${pts.map(p => p[0] + "," + p[1]).join(" ")}"/>${pts.map(p => `<circle cx="${p[0]}" cy="${p[1]}" r="3" fill="${vColor(p[2])}"/>`).join("")}</svg>`;
+}
+function trendChart(a, it){
+  const W = 480, H = 240, L = 50, R = 10, T = 12, B = 30;
+  const vals = a.map(r => r.value).filter(Number.isFinite);
+  const bands = []; const nb = it ? it.normal : null, cb = it ? it.caution : null;
+  [nb, cb].forEach(b => { if (b){ if (has(b.min)) bands.push(+b.min); if (has(b.max)) bands.push(+b.max); } });
+  const all = vals.concat(bands); if (!all.length) return "";
+  let mn = Math.min(...all), mx = Math.max(...all); if (mn === mx){ mn -= 1; mx += 1; } const pad = (mx - mn) * 0.1; mn -= pad; mx += pad;
+  const hasOL = a.some(r => r.value === Infinity);
+  const top = hasOL ? T + 16 : T;
+  const y = v => v === Infinity ? T + 4 : top + (1 - (v - mn) / (mx - mn)) * (H - top - B);
+  const x = i => a.length === 1 ? (L + W - R) / 2 : L + i / (a.length - 1) * (W - L - R);
+  let s = `<svg class="trend" viewBox="0 0 ${W} ${H}" role="img" aria-label="측정값 추이">`;
+  const band = (b, fill) => { if (!b || !(has(b.min) || has(b.max))) return ""; const y1 = y(has(b.max) ? Math.min(+b.max, mx) : mx), y2 = y(has(b.min) ? Math.max(+b.min, mn) : mn); return `<rect x="${L}" y="${y1}" width="${W - L - R}" height="${Math.max(0, y2 - y1)}" fill="${fill}"/>`; };
+  s += band(cb, "var(--cau-bg)") + band(nb, "var(--ok-bg)");
+  const raw = (mx - mn) / 4, mag = Math.pow(10, Math.floor(Math.log10(raw))), stp = [1, 2, 2.5, 5, 10].map(k => k * mag).find(k => k >= raw);
+  for (let v = Math.ceil(mn / stp) * stp; v <= mx + 1e-9; v += stp){ s += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)" stroke-width="1"/><text x="${L - 6}" y="${y(v) + 5}" text-anchor="end" font-size="13" fill="var(--sub)">${fmt(Math.round(v / stp) * stp)}</text>`; }
+  bands.forEach(v => { s += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--sub)" stroke-dasharray="4 3" stroke-width="1"/>`; });
+  const pts = a.map((r, i) => [x(i), y(r.value), r]).filter(p => Number.isFinite(p[1]));
+  s += `<polyline fill="none" stroke="var(--ink)" stroke-width="2" points="${pts.map(p => p[0] + "," + p[1]).join(" ")}"/>`;
+  pts.forEach(p => { s += `<circle cx="${p[0]}" cy="${p[1]}" r="5" fill="${vColor(p[2].verdict)}" stroke="var(--card)" stroke-width="1.5"/>`; });
+  const step = Math.max(1, Math.ceil(a.length / 4));
+  a.forEach((r, i) => { if (i % step === 0 || i === a.length - 1) s += `<text x="${x(i)}" y="${H - 10}" text-anchor="${a.length > 1 && i === a.length - 1 ? "end" : i === 0 && a.length > 1 ? "start" : "middle"}" font-size="13" fill="var(--sub)">${esc(r.date.slice(2).replace(/-/g, "."))}</text>`; });
+  if (hasOL) s += `<text x="${L - 6}" y="${T + 8}" text-anchor="end" font-size="13" fill="var(--sub)">OL</text>`;
+  return s + `</svg><div class="hint">초록 띠 = 정상 범위, 노란 띠 = 주의 범위 (지금 기준값으로 그림)</div>`;
+}
+function openGroup(k){
+  const [itemId, car, point] = k.split("|");
+  const a = S.records.filter(r => r.itemId === itemId && (r.car || "") === car && (r.point || "") === point).sort((x, y) => (x.date + x.ts).localeCompare(y.date + y.ts));
+  if (!a.length) return closeModal();
+  const it = itemById(itemId); const nm = it ? it.name : a[0].itemName;
+  openModal(`<div class="sheet-head"><h2>${esc(nm)}</h2><button class="btn sm" data-close>닫기</button></div>
+    <div class="muted">${esc(car || "차량 미입력")}${point ? " · " + esc(point) : ""} · ${it ? esc(stdText(it)) : "항목이 지워짐"}</div>
+    <div style="margin-top:10px">${trendChart(a, it)}</div>
+    <table class="rec" style="margin-top:10px"><tr><th>날짜</th><th>값</th><th>판정</th><th></th></tr>
+    ${a.slice().reverse().map(r => `<tr><td class="num">${esc(r.date)}</td><td><b class="num">${esc(fmt(r.value))} ${esc(r.unit)}</b>${r.memo ? `<div class="muted">${esc(r.memo)}</div>` : ""}${r.detail ? `<div class="muted">${esc(r.detail)}</div>` : ""}</td><td><span class="tag ${r.verdict}">${esc(r.label)}</span></td><td><button class="btn sm danger" data-delrec="${r.id}">지우기</button></td></tr>`).join("")}</table>`);
+  document.querySelectorAll("[data-delrec]").forEach(b => b.onclick = async () => {
+    if (!confirm("이 기록을 지울까요?")) return;
+    await DB.del("records", b.dataset.delrec); S.records = S.records.filter(r => r.id !== b.dataset.delrec); renderRecords(); openGroup(k);
+  });
+}
+function exportCSV(list){
+  const rows = [["날짜", "항목", "분류", "차량", "위치", "값", "단위", "판정", "계산 내용", "당시 기준", "메모"]];
+  list.slice().sort((a, b) => (a.date + a.ts).localeCompare(b.date + b.ts)).forEach(r => rows.push([r.date, (itemById(r.itemId) || {}).name || r.itemName, r.group, r.car, r.point, r.value === Infinity ? "OL" : r.value, r.unit, r.label, r.detail, r.std, r.memo]));
+  const csv = "﻿" + rows.map(r => r.map(c => `"${String(c ?? "").replace(/"/g, '""')}"`).join(",")).join("\r\n");
+  download(`측정기록_${today()}.csv`, csv, "text/csv");
+}
+
+/* ===== 계산기 탭 (일반 공식) ===== */
+const RHO = {cu: {name: "구리", rho: 0.017241, a: 0.00393}, al: {name: "알루미늄", rho: 0.028264, a: 0.00403}};
+const C = ls.get("calc", {});
+function renderCalc(){
+  const m = $("#main");
+  const tools = [["ir", "절연저항 온도 보정"], ["open", "단선·접촉불량 판정"], ["vd", "전압강하"], ["ohm", "옴의 법칙"]];
+  const t = C.tool || "ir";
+  m.innerHTML = `<div class="chips">${tools.map(([k, n]) => `<button class="chip ${t === k ? "on" : ""}" data-tool="${k}">${n}</button>`).join("")}</div><div id="tool" style="margin-top:12px"></div>
+    <div class="hint" style="margin-top:14px">계산기는 일반 공식이에요. 판정 기준(허용 %, 배수 등)은 매뉴얼 값으로 바꿔 쓰세요. 넣은 값은 이 기기에만 남습니다.</div>`;
+  m.querySelectorAll("[data-tool]").forEach(b => b.onclick = () => { C.tool = b.dataset.tool; ls.set("calc", C); renderCalc(); });
+  ({ir: toolIR, open: toolOpen, vd: toolVD, ohm: toolOhm})[t]($("#tool"));
+}
+function field(id, label, ph, extra){ return `<div><label class="f">${label}</label><div class="inrow"><input class="t" inputmode="decimal" id="${id}" placeholder="${esc(ph || "")}" value="${esc(C[id] ?? "")}" autocomplete="off">${extra || ""}</div></div>`; }
+function bindCalc(root, fn){ root.querySelectorAll("input,select").forEach(el => { const h = () => { C[el.id] = el.value; ls.set("calc", C); fn(); }; el.oninput = h; el.onchange = h; }); root.querySelectorAll("[data-olc]").forEach(b => b.onclick = () => { const el = $("#" + b.dataset.olc); el.value = "OL"; C[el.id] = "OL"; ls.set("calc", C); fn(); }); fn(); }
+const vbox = (v, big, val, why) => `<div class="verdict ${{ok: "v-ok", cau: "v-cau", bad: "v-bad", none: "v-none"}[v]}"><div class="big" style="font-size:${v === "none" ? 22 : 30}px">${big}</div>${val ? `<div class="val">${val}</div>` : ""}${why ? `<div class="why">${why}</div>` : ""}</div>`;
+function toolIR(el){
+  el.innerHTML = `<div class="card"><h3 style="margin-top:0">절연저항 온도 보정</h3>
+    <div class="grid2">${field("ir_r", "측정값 (MΩ)", "예: 150")}${field("ir_t", "측정 온도 (℃)", "예: 32")}${field("ir_ref", "기준 온도 (℃)", "20")}${field("ir_step", "절반이 되는 온도 간격 (℃)", "10")}</div>
+    <div class="grid2">${field("ir_min", "판정 기준: 최소 (MΩ, 선택)", "매뉴얼 값")}</div>
+    <div id="out"></div>
+    <div class="formula">기준온도 환산값 = 측정값 × 2^((측정온도 − 기준온도) ÷ 간격)\n온도가 높을 때 재면 값이 낮게 나오므로 올려서 환산합니다.</div></div>`;
+  bindCalc(el, () => {
+    const r = num(C.ir_r), t = num(C.ir_t), ref = has(C.ir_ref) ? +C.ir_ref : 20, st = has(C.ir_step) && +C.ir_step ? +C.ir_step : 10, mn = num(C.ir_min);
+    if (!Number.isFinite(r) || !Number.isFinite(t)) return $("#out").innerHTML = vbox("none", "값을 넣어 주세요");
+    const v = r * Math.pow(2, (t - ref) / st), f = Math.pow(2, (t - ref) / st);
+    const vv = Number.isFinite(mn) ? (v >= mn ? "ok" : "bad") : "none";
+    $("#out").innerHTML = vbox(vv, vv === "none" ? `${ref}℃ 환산 ${fmt(v)} MΩ` : (vv === "ok" ? "✔ 정상" : "✖ 이상"), vv === "none" ? "" : `${ref}℃ 환산 ${fmt(v)} MΩ`, `보정 계수 ×${fmt(f, 3)}${Number.isFinite(mn) ? ` · 기준 ${fmt(mn)} MΩ 이상` : ""}`);
+  });
+}
+function toolOpen(el){
+  const mode = C.op_mode || "direct";
+  el.innerHTML = `<div class="card"><h3 style="margin-top:0">단선·접촉불량 판정 (저항)</h3>
+    <div class="grid2">${field("op_r", "측정 저항 (Ω)", "끊겼으면 OL", `<button class="btn" data-olc="op_r">OL</button>`)}${field("op_lead", "리드선 저항 (Ω)", "0")}</div>
+    <label class="f">정상 저항은</label>
+    <select class="t" id="op_mode"><option value="direct" ${mode === "direct" ? "selected" : ""}>직접 입력 (매뉴얼·도면 값)</option><option value="wire" ${mode === "wire" ? "selected" : ""}>전선 길이·굵기로 계산</option></select>
+    ${mode === "wire" ? `<div class="grid2">${field("op_len", "전선 길이 (m, 왕복이면 합)", "예: 30")}${field("op_mm2", "단면적 (mm²)", "예: 1.5")}${field("op_temp", "전선 온도 (℃)", "20")}<div><label class="f">재질</label><select class="t" id="op_mat"><option value="cu" ${C.op_mat !== "al" ? "selected" : ""}>구리</option><option value="al" ${C.op_mat === "al" ? "selected" : ""}>알루미늄</option></select></div></div>`
+      : `<div class="grid2">${field("op_ref", "정상 저항 (Ω)", "예: 0.5")}</div>`}
+    <div class="grid2">${field("op_ok", "정상: 정상 저항의 몇 배까지", "1.2")}${field("op_cau", "주의: 몇 배까지 (넘으면 이상)", "2")}${field("op_abs", "또는 정상 허용 추가저항 (Ω)", "선택: 예 0.1")}</div>
+    <div id="out"></div>
+    <div class="formula">실제 저항 = 측정값 − 리드선 저항\n전선 저항 = 비저항 × 길이 ÷ 단면적 × (1 + 온도계수 × (온도 − 20))\n구리 비저항 0.017241 Ω·mm²/m (20℃)\nOL(무한대) → 단선 · 정상보다 많이 높음 → 접촉불량 의심</div></div>`;
+  bindCalc(el, () => {
+    if (C.op_mode !== mode && C.op_mode) return toolOpen(el);
+    const r = num(C.op_r), lead = has(C.op_lead) ? +C.op_lead : 0;
+    if (r === Infinity) return $("#out").innerHTML = vbox("bad", "✖ 단선", "∞ (OL)", "선이 끊겼거나 접점이 완전히 떨어져 있습니다.");
+    let ref;
+    if (mode === "wire"){ const L = num(C.op_len), A = num(C.op_mm2), T = has(C.op_temp) ? +C.op_temp : 20, mt = RHO[C.op_mat === "al" ? "al" : "cu"];
+      if (Number.isFinite(L) && Number.isFinite(A) && A > 0) ref = mt.rho * L / A * (1 + mt.a * (T - 20)); }
+    else ref = num(C.op_ref);
+    if (!Number.isFinite(r)) return $("#out").innerHTML = vbox("none", "측정값을 넣어 주세요", Number.isFinite(ref) ? `정상 저항 ${fmt(ref)} Ω` : "");
+    const v = r - lead;
+    if (!Number.isFinite(ref)) return $("#out").innerHTML = vbox("none", `실제 저항 ${fmt(v)} Ω`, "", "정상 저항을 넣으면 판정합니다.");
+    const kOk = has(C.op_ok) ? +C.op_ok : 1.2, kCau = has(C.op_cau) ? +C.op_cau : 2, abs = num(C.op_abs);
+    const okLim = Number.isFinite(abs) ? ref + abs : ref * kOk, cauLim = Math.max(okLim, ref * kCau);
+    const vv = v <= okLim ? "ok" : v <= cauLim ? "cau" : "bad";
+    $("#out").innerHTML = vbox(vv, {ok: "✔ 정상", cau: "⚠ 주의 (접촉 확인)", bad: "✖ 접촉불량 의심"}[vv], `실제 ${fmt(v)} Ω / 정상 ${fmt(ref)} Ω (${fmt(ref ? v / ref : 0, 2)}배)`,
+      `정상 ${fmt(okLim)} Ω 이하 · 주의 ${fmt(cauLim)} Ω 이하`);
+  });
+}
+function toolVD(el){
+  const mode = C.vd_mode || "meas";
+  el.innerHTML = `<div class="card"><h3 style="margin-top:0">전압강하</h3>
+    <div class="chips"><button class="chip ${mode === "meas" ? "on" : ""}" data-vm="meas">잰 전압으로</button><button class="chip ${mode === "calc" ? "on" : ""}" data-vm="calc">전류·전선으로 계산</button></div>
+    ${mode === "meas" ? `<div class="grid2">${field("vd_vs", "공급 쪽 전압 (V)", "예: 100")}${field("vd_ve", "부하 쪽 전압 (V)", "예: 95")}</div>`
+      : `<div class="grid2">${field("vd_v", "공급 전압 (V)", "예: 100")}${field("vd_i", "전류 (A)", "예: 10")}${field("vd_len", "편도 길이 (m)", "예: 40")}${field("vd_mm2", "단면적 (mm²)", "예: 2.5")}
+        <div><label class="f">방식</label><select class="t" id="vd_sys"><option value="2" ${C.vd_sys !== "3" ? "selected" : ""}>직류 / 단상 2선</option><option value="3" ${C.vd_sys === "3" ? "selected" : ""}>3상 3선</option></select></div>
+        <div><label class="f">재질</label><select class="t" id="vd_mat"><option value="cu" ${C.vd_mat !== "al" ? "selected" : ""}>구리</option><option value="al" ${C.vd_mat === "al" ? "selected" : ""}>알루미늄</option></select></div></div>`}
+    <div class="grid2">${field("vd_lim", "허용 강하율 (%) — 매뉴얼 값", "예: 5")}${field("vd_cau", "주의 시작 (%) (선택)", "예: 4")}</div>
+    <div id="out"></div>
+    <div class="formula">${mode === "meas" ? "강하율(%) = (공급 전압 − 부하 전압) ÷ 공급 전압 × 100" : "직류·단상: 강하 = 2 × 전류 × 길이 × 비저항 ÷ 단면적\n3상: 강하 = √3 × 전류 × 길이 × 비저항 ÷ 단면적\n(리액턴스는 무시한 간이식, 구리 0.017241 Ω·mm²/m)"}</div></div>`;
+  el.querySelectorAll("[data-vm]").forEach(b => b.onclick = () => { C.vd_mode = b.dataset.vm; ls.set("calc", C); toolVD(el); });
+  bindCalc(el, () => {
+    let drop, base;
+    if (mode === "meas"){ const vs = num(C.vd_vs), ve = num(C.vd_ve); if (Number.isFinite(vs) && Number.isFinite(ve) && vs){ drop = vs - ve; base = vs; } }
+    else { const V = num(C.vd_v), I = num(C.vd_i), L = num(C.vd_len), A = num(C.vd_mm2), mt = RHO[C.vd_mat === "al" ? "al" : "cu"];
+      if ([V, I, L, A].every(Number.isFinite) && A > 0 && V){ drop = (C.vd_sys === "3" ? Math.sqrt(3) : 2) * I * L * mt.rho / A; base = V; } }
+    if (drop === undefined) return $("#out").innerHTML = vbox("none", "값을 넣어 주세요");
+    const pct = drop / base * 100, lim = num(C.vd_lim), cau = num(C.vd_cau);
+    const vv = !Number.isFinite(lim) ? "none" : pct > lim ? "bad" : (Number.isFinite(cau) && pct > cau) ? "cau" : "ok";
+    $("#out").innerHTML = vbox(vv, vv === "none" ? `강하율 ${fmt(pct, 2)}%` : {ok: "✔ 정상", cau: "⚠ 주의", bad: "✖ 이상"}[vv], `강하 ${fmt(drop, 2)} V · ${fmt(pct, 2)}%`, `${mode === "calc" ? `부하 쪽 예상 ${fmt(base - drop, 1)} V · ` : ""}${Number.isFinite(lim) ? `허용 ${fmt(lim)}% 이하` : "허용 강하율을 넣으면 판정합니다"}`);
+  });
+}
+function toolOhm(el){
+  el.innerHTML = `<div class="card"><h3 style="margin-top:0">옴의 법칙</h3><div class="hint">두 개만 넣으면 나머지를 구합니다.</div>
+    <div class="grid3">${field("oh_v", "전압 V", "")}${field("oh_i", "전류 A", "")}${field("oh_r", "저항 Ω", "")}</div>
+    <div id="out"></div><div class="formula">V = I × R · 전력 P = V × I</div>
+    <button class="btn sm" id="ohClr" style="margin-top:8px">비우기</button></div>`;
+  $("#ohClr", el).onclick = () => { delete C.oh_v; delete C.oh_i; delete C.oh_r; ls.set("calc", C); toolOhm(el); };
+  bindCalc(el, () => {
+    let V = num(C.oh_v), I = num(C.oh_i), R = num(C.oh_r); const n = [V, I, R].filter(Number.isFinite).length;
+    if (n < 2) return $("#out").innerHTML = vbox("none", "두 값을 넣어 주세요");
+    if (!Number.isFinite(V)) V = I * R; else if (!Number.isFinite(I)) I = V / R; else if (!Number.isFinite(R)) R = V / I;
+    $("#out").innerHTML = vbox("none", `${fmt(V)} V · ${fmt(I)} A · ${fmt(R)} Ω`, "", `전력 ${fmt(V * I)} W`);
+  });
+}
+
+/* ===== 기준값 탭 ===== */
+function renderItems(){
+  const m = $("#main"); const n = unreviewed(); const q = S.itemFilter.trim().toLowerCase();
+  const list = S.items.filter(i => (S.itemGroup !== "__rev" || !i.reviewed) && (!S.itemGroup || S.itemGroup === "__rev" || (i.group || "기타") === S.itemGroup) && (!q || (i.name + " " + (i.group || "") + " " + (i.source?.doc || "")).toLowerCase().includes(q)));
+  const meta = ls.get("std-meta", null);
+  m.innerHTML = `
+    <div class="card">
+      <div class="row"><b class="grow">기준값 파일</b></div>
+      <div class="muted" style="margin-top:4px">${meta ? `마지막으로 불러온 파일: ${esc(meta.name)} (${esc(meta.date)}${meta.title ? " · " + esc(meta.title) : ""})` : "매뉴얼에서 뽑은 기준값 파일(.json)을 불러오면 항목이 한 번에 들어옵니다."}</div>
+      <div class="row" style="margin-top:10px"><button class="btn primary" id="imp">파일 불러오기</button><button class="btn" id="add">+ 직접 추가</button><span class="grow"></span><button class="btn sm" id="more">백업·기타</button></div>
+    </div>
+    ${n ? `<div class="warn" style="margin-bottom:10px"><b>확인 전 항목 ${n}개</b> — 매뉴얼에서 자동으로 뽑은 값은 틀릴 수 있어요. 항목을 눌러 원문과 비교한 뒤 <b>맞아요</b>를 눌러 주세요. <button class="btn sm" id="revOnly" style="margin-left:6px">확인 전만 보기</button></div>` : ""}
+    <input class="t" id="iq" placeholder="항목 찾기" value="${esc(S.itemFilter)}">
+    <div class="chips" style="margin-top:8px"><button class="chip ${!S.itemGroup ? "on" : ""}" data-ig="">전체 ${S.items.length}</button>${n ? `<button class="chip ${S.itemGroup === "__rev" ? "on" : ""}" data-ig="__rev">확인 전 ${n}</button>` : ""}${groups().map(g => `<button class="chip ${S.itemGroup === g ? "on" : ""}" data-ig="${esc(g)}">${esc(g)}</button>`).join("")}</div>
+    <div style="margin-top:10px">${list.map(i => `<div class="card click" data-ed="${i.id}">
+      <div class="row"><span class="it-name grow">${esc(i.name)}</span>${i.reviewed ? `<span class="tag ok">확인함</span>` : `<span class="tag rev">확인 전</span>`}</div>
+      <div class="std">${esc(i.group || "기타")} · ${esc(METHODS[i.method]?.short || "")} · ${esc(stdText(i))}</div>
+      ${i.source?.doc ? `<div class="std">📖 ${esc(i.source.doc)}${i.source.page ? " " + esc(i.source.page) + "쪽" : ""}</div>` : ""}</div>`).join("") || (S.items.length ? `<div class="empty">찾는 항목이 없어요.</div>` : `<div class="empty">항목이 없어요.<br><br><button class="btn sm" id="addEx2">연습용 예시 항목 넣어 보기</button></div>`)}</div>`;
+  const iq = $("#iq"); iq.oninput = () => { S.itemFilter = iq.value; const p = iq.selectionStart; renderItems(); const x = $("#iq"); x.focus(); x.setSelectionRange(p, p); };
+  m.querySelectorAll("[data-ig]").forEach(b => b.onclick = () => { S.itemGroup = b.dataset.ig; renderItems(); });
+  m.querySelectorAll("[data-ed]").forEach(b => b.onclick = () => editItem(itemById(b.dataset.ed)));
+  $("#imp").onclick = () => pickFile(importFile);
+  $("#add").onclick = () => editItem(null);
+  $("#more").onclick = moreSheet;
+  if ($("#revOnly")) $("#revOnly").onclick = () => { S.itemGroup = "__rev"; renderItems(); };
+  if ($("#addEx2")) $("#addEx2").onclick = addExamples;
+}
+function bandInputs(prefix, b, label){
+  return `<div class="grid2"><div><label class="f">${label} 최소</label><input class="t" inputmode="decimal" id="${prefix}min" value="${esc(b?.min ?? "")}" placeholder="없으면 비움"></div><div><label class="f">${label} 최대</label><input class="t" inputmode="decimal" id="${prefix}max" value="${esc(b?.max ?? "")}" placeholder="없으면 비움"></div></div>`;
+}
+function editItem(it){
+  const isNew = !it; const d = it ? JSON.parse(JSON.stringify(it)) : {id: uid(), name: "", group: "", method: "direct", unit: "", normal: {}, caution: {}, params: {}, points: [], source: {}, reviewed: true};
+  d.params = d.params || {}; d.source = d.source || {}; d.normal = d.normal || {}; d.caution = d.caution || {};
+  const draw = () => {
+    const mt = d.method; const pu = ["deviation", "vdrop", "imbalance"].includes(mt) ? "%" : (d.unit || "단위");
+    openModal(`<div class="sheet-head"><h2>${isNew ? "항목 추가" : "항목 보기·고치기"}</h2><button class="btn sm" data-close>닫기</button></div>
+      ${!isNew && !d.reviewed ? `<div class="warn">아직 확인 전이에요. 아래 <b>매뉴얼 원문</b>과 값이 맞는지 보고, 맞으면 맨 아래 <b>맞아요, 저장</b>을 눌러 주세요.</div>` : ""}
+      ${d.source.quote ? `<label class="f">매뉴얼 원문 ${d.source.doc ? "(" + esc(d.source.doc) + (d.source.page ? " " + esc(d.source.page) + "쪽" : "") + ")" : ""}</label><div class="quote">${esc(d.source.quote)}</div>` : ""}
+      <label class="f">항목 이름</label><input class="t" id="e_name" value="${esc(d.name)}" placeholder="예: 견인전동기 절연저항">
+      <div class="grid2"><div><label class="f">분류</label><input class="t" id="e_group" list="grpList" value="${esc(d.group)}" placeholder="예: 견인전동기"><datalist id="grpList">${groups().map(g => `<option value="${esc(g)}">`).join("")}</datalist></div>
+        <div><label class="f">측정값 단위</label><input class="t" id="e_unit" list="unitList" value="${esc(d.unit)}" placeholder="예: MΩ"><datalist id="unitList">${["MΩ", "kΩ", "Ω", "mΩ", "V", "mV", "A", "mA", "Hz", "℃", "mm", "N·m", "bar", "kPa"].map(u => `<option value="${u}">`).join("")}</datalist></div></div>
+      <label class="f">판정 방법</label><select class="t" id="e_method">${Object.entries(METHODS).map(([k, v]) => `<option value="${k}" ${mt === k ? "selected" : ""}>${v.name}</option>`).join("")}</select>
+      <div class="hint">${esc(METHODS[mt].hint)}</div>
+      ${mt === "ir_temp" ? `<div class="grid2"><div><label class="f">기준 온도 (℃)</label><input class="t" inputmode="decimal" id="p_refTemp" value="${esc(d.params.refTemp ?? 20)}"></div><div><label class="f">절반이 되는 온도 간격 (℃)</label><input class="t" inputmode="decimal" id="p_halveEvery" value="${esc(d.params.halveEvery ?? 10)}"></div></div>` : ""}
+      ${mt === "deviation" ? `<label class="f">기준값 (${esc(d.unit || "단위")})</label><input class="t" inputmode="decimal" id="p_ref" value="${esc(d.params.ref ?? "")}" placeholder="예: 12.5">` : ""}
+      ${mt === "vdrop" ? `<label class="f">정격 전압 (V, 선택 — 넣으면 정격 기준 %, 비우면 공급 전압 기준 %)</label><input class="t" inputmode="decimal" id="p_nominal" value="${esc(d.params.nominal ?? "")}">` : ""}
+      ${mt === "imbalance" ? `<label class="f">상 이름 (쉼표로 구분)</label><input class="t" id="p_phases" value="${esc(d.params.phases ?? "U,V,W")}">` : ""}
+      <h3>판정 기준 (${esc(pu)})</h3>
+      ${bandInputs("n_", d.normal, "정상")}
+      ${bandInputs("c_", d.caution, "주의")}
+      <div class="hint">정상 범위 안 → 정상 · 정상은 벗어났지만 주의 범위 안 → 주의 · 둘 다 벗어나면 → 이상.<br>예) 1 MΩ 이상 정상, 0.5~1 MΩ 주의 → 정상 최소 1, 주의 최소 0.5. 주의 단계가 없으면 주의 칸은 비워 두세요.</div>
+      <div id="e_chk"></div>
+      <label class="f">측정 위치 목록 (쉼표로 구분, 선택)</label><input class="t" id="e_points" value="${esc((d.points || []).join(", "))}" placeholder="예: 1번, 2번, 3번, 4번">
+      <label class="f">측정 조건·측정기 (선택)</label><input class="t" id="e_cond" value="${esc(d.condition || "")}" placeholder="예: DC 1000V 메거, 1분값">
+      <label class="f">메모 (선택)</label><textarea class="t" id="e_note">${esc(d.note || "")}</textarea>
+      <details ${d.source.doc || d.source.quote ? "open" : ""}><summary>출처 (매뉴얼)</summary>
+        <div class="grid2"><div><label class="f">매뉴얼 이름</label><input class="t" id="s_doc" value="${esc(d.source.doc || "")}"></div><div><label class="f">쪽</label><input class="t" id="s_page" value="${esc(d.source.page || "")}"></div></div>
+        <label class="f">원문</label><textarea class="t" id="s_quote">${esc(d.source.quote || "")}</textarea></details>
+      <div class="row" style="margin-top:16px">
+        ${isNew ? "" : `<button class="btn danger" id="e_del">지우기</button>`}<span class="grow"></span>
+        <button class="btn primary" id="e_save">${!isNew && !d.reviewed ? "맞아요, 저장" : "저장"}</button></div>
+      ${!isNew && !d.reviewed ? `<div class="row" style="margin-top:8px"><span class="grow"></span><button class="btn sm" id="e_saveLater">확인은 나중에, 고친 것만 저장</button></div>` : ""}`);
+    const collect = () => {
+      const v = id => ($("#" + id) ? $("#" + id).value.trim() : undefined);
+      d.name = v("e_name"); d.group = v("e_group"); d.unit = v("e_unit");
+      const nb = x => { const s = v(x); return s === "" || s === undefined ? undefined : num(s); };
+      d.normal = clean({min: nb("n_min"), max: nb("n_max")}); d.caution = clean({min: nb("c_min"), max: nb("c_max")});
+      ["refTemp", "halveEvery", "ref", "nominal"].forEach(k => { if ($("#p_" + k)){ const s = v("p_" + k); if (s === "") delete d.params[k]; else d.params[k] = num(s); } });
+      if ($("#p_phases")) d.params.phases = v("p_phases");
+      d.points = v("e_points").split(/[,，]/).map(s => s.trim()).filter(Boolean);
+      d.condition = v("e_cond"); d.note = $("#e_note").value.trim();
+      d.source = clean({doc: v("s_doc"), page: v("s_page"), quote: $("#s_quote").value.trim()});
+    };
+    const chk = () => { collect(); const w = checkItem(d); $("#e_chk").innerHTML = w.length ? `<div class="warn">${w.map(esc).join("<br>")}</div>` : ""; };
+    document.querySelectorAll(".sheet input, .sheet textarea").forEach(el => el.addEventListener("input", chk)); chk();
+    $("#e_method").onchange = e => { collect(); d.method = e.target.value; draw(); };
+    const save = async reviewed => {
+      collect(); if (!d.name) return toast("항목 이름을 넣어 주세요");
+      if (["deviation"].includes(d.method) && !has(d.params.ref)) return toast("기준값을 넣어 주세요");
+      d.reviewed = reviewed; d.updated = new Date().toISOString();
+      await DB.put("items", d); const i = S.items.findIndex(x => x.id === d.id); if (i >= 0) S.items[i] = d; else S.items.push(d); S.items.sort(byItem);
+      closeModal(); toast(reviewed ? "저장했어요" : "고친 것만 저장했어요 (확인 전)"); render();
+    };
+    $("#e_save").onclick = () => save(true);
+    if ($("#e_saveLater")) $("#e_saveLater").onclick = () => save(false);
+    if ($("#e_del")) $("#e_del").onclick = async () => {
+      const n = S.records.filter(r => r.itemId === d.id).length;
+      if (!confirm(`'${d.name}' 항목을 지울까요?${n ? `\n(이 항목 기록 ${n}개는 남겨 둡니다)` : ""}`)) return;
+      await DB.del("items", d.id); S.items = S.items.filter(x => x.id !== d.id); if (S.cur === d.id) S.cur = null; closeModal(); render();
+    };
+  };
+  draw();
+}
+const clean = o => { Object.keys(o).forEach(k => (o[k] === undefined || o[k] === "" || (typeof o[k] === "number" && Number.isNaN(o[k]))) && delete o[k]); return o; };
+function checkItem(d){
+  const w = [], n = d.normal || {}, c = d.caution || {};
+  if (!has(n.min) && !has(n.max)) w.push("정상 범위가 비어 있어요. 이대로면 판정 없이 값만 기록됩니다.");
+  if (has(n.min) && has(n.max) && +n.min > +n.max) w.push("정상 최소가 최대보다 커요.");
+  if (has(c.min) && has(c.max) && +c.min > +c.max) w.push("주의 최소가 최대보다 커요.");
+  if (has(c.min) && has(n.min) && +c.min > +n.min) w.push("주의 최소는 정상 최소보다 작아야 해요 (주의 범위가 정상 범위를 감싸야 함).");
+  if (has(c.max) && has(n.max) && +c.max < +n.max) w.push("주의 최대는 정상 최대보다 커야 해요.");
+  return w;
+}
+
+/* ===== 파일 불러오기 / 내보내기 ===== */
+let fileCb = null;
+$("#filein").onchange = async e => { const f = e.target.files[0]; e.target.value = ""; if (f && fileCb) fileCb(f); };
+function pickFile(cb){ fileCb = cb; $("#filein").click(); }
+function download(name, text, type){
+  const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([text], {type: type + ";charset=utf-8"})); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+const fixInf = v => (v === "OL" || v === "∞" || v === "Infinity") ? Infinity : v;
+function normItem(x){
+  const it = {id: String(x.id || uid()), name: String(x.name || "").trim(), group: String(x.group || "").trim(), method: METHODS[x.method] ? x.method : "direct",
+    unit: String(x.unit || "").trim(), normal: clean({min: has(x.normal?.min) ? +x.normal.min : undefined, max: has(x.normal?.max) ? +x.normal.max : undefined}),
+    caution: clean({min: has(x.caution?.min) ? +x.caution.min : undefined, max: has(x.caution?.max) ? +x.caution.max : undefined}),
+    params: {}, points: Array.isArray(x.points) ? x.points.map(String) : [], condition: String(x.condition || ""), note: String(x.note || ""),
+    source: clean({doc: x.source?.doc ? String(x.source.doc) : undefined, page: x.source?.page !== undefined ? String(x.source.page) : undefined, quote: x.source?.quote ? String(x.source.quote) : undefined}),
+    reviewed: x.reviewed === true, updated: x.updated || new Date().toISOString()};
+  const p = x.params || {}; ["refTemp", "halveEvery", "ref", "nominal"].forEach(k => { if (has(p[k])) it.params[k] = +p[k]; }); if (p.phases) it.params.phases = String(p.phases);
+  return it;
+}
+const sameStd = (a, b) => JSON.stringify([a.name, a.group, a.method, a.unit, a.normal, a.caution, a.params, a.points, a.condition]) === JSON.stringify([b.name, b.group, b.method, b.unit, b.normal, b.caution, b.params, b.points, b.condition]);
+async function importFile(f){
+  let j; try { j = JSON.parse(await f.text()); } catch { return toast("JSON 파일이 아니에요"); }
+  if (j.format === "ktx-meas-backup") return importBackup(j, f.name);
+  const arr = Array.isArray(j) ? j : j.items;
+  if (j.format && j.format !== "ktx-meas-standards") return toast("이 앱용 기준값 파일이 아니에요");
+  if (!Array.isArray(arr)) return toast("항목(items)이 없는 파일이에요");
+  const inc = arr.map(normItem).filter(i => i.name);
+  const add = [], chg = [], same = [];
+  inc.forEach(i => { const o = itemById(i.id); if (!o) add.push(i); else if (sameStd(o, i)) same.push(i); else chg.push([o, i]); });
+  openModal(`<div class="sheet-head"><h2>기준값 파일 불러오기</h2><button class="btn sm" data-close>닫기</button></div>
+    <div class="muted">${esc(f.name)}${j.title ? " · " + esc(j.title) : ""}${j.created ? " · 만든 날 " + esc(j.created) : ""}</div>
+    ${j.notes ? `<div class="quote">${esc(j.notes)}</div>` : ""}
+    <div class="card" style="margin-top:10px">새 항목 <b>${add.length}</b>개 · 값이 바뀐 항목 <b>${chg.length}</b>개 · 그대로 ${same.length}개</div>
+    ${chg.length ? `<h3>바뀌는 항목</h3>${chg.map(([o, n]) => `<div class="card"><b>${esc(n.name)}</b><div class="std">지금: ${esc(stdText(o))}</div><div class="std">파일: ${esc(stdText(n))}</div></div>`).join("")}
+      <label class="row" style="margin-top:6px"><input type="checkbox" id="ovr" checked> 바뀐 항목을 파일 값으로 바꾸기</label>` : ""}
+    ${add.length ? `<details><summary>새 항목 목록 보기</summary>${add.map(n => `<div class="std">• ${esc(n.name)} — ${esc(stdText(n))}</div>`).join("")}</details>` : ""}
+    <div class="hint" style="margin-top:8px">파일에서 들어온 항목은 '확인 전'으로 표시됩니다(파일에 확인함으로 적힌 것 제외). 기록은 건드리지 않아요.</div>
+    <div class="row" style="margin-top:14px"><span class="grow"></span><button class="btn primary" id="doImp" ${add.length + chg.length ? "" : "disabled"}>불러오기</button></div>`);
+  $("#doImp").onclick = async () => {
+    const ovr = $("#ovr") ? $("#ovr").checked : false;
+    const put = add.concat(ovr ? chg.map(([o, n]) => n) : []);
+    await DB.putMany("items", put); await loadAll();
+    ls.set("std-meta", {name: f.name, title: j.title || "", date: today()});
+    closeModal(); toast(`${put.length}개 항목을 넣었어요`); S.itemGroup = unreviewed() ? "__rev" : ""; render();
+  };
+}
+async function importBackup(j, name){
+  const items = (j.items || []).map(normItem), recs = (j.records || []).map(r => ({...r, value: fixInf(r.value)}));
+  openModal(`<div class="sheet-head"><h2>백업 되살리기</h2><button class="btn sm" data-close>닫기</button></div>
+    <div class="muted">${esc(name)} · 항목 ${items.length}개 · 기록 ${recs.length}개 (${esc(j.created || "")})</div>
+    <div class="hint" style="margin-top:8px">합치기: 지금 데이터는 두고 백업에 있는 것을 더하거나 같은 것은 덮어씁니다.<br>통째로 바꾸기: 지금 데이터를 모두 지우고 백업으로 바꿉니다.</div>
+    <div class="row" style="margin-top:14px"><span class="grow"></span><button class="btn danger" id="bkRep">통째로 바꾸기</button><button class="btn primary" id="bkMerge">합치기</button></div>`);
+  const go = async rep => {
+    if (rep && !confirm("지금 있는 항목과 기록을 모두 지우고 백업으로 바꿀까요?")) return;
+    if (rep){ await DB.clear("items"); await DB.clear("records"); }
+    await DB.putMany("items", items); await DB.putMany("records", recs); await loadAll(); closeModal(); toast("백업을 되살렸어요"); render();
+  };
+  $("#bkRep").onclick = () => go(true); $("#bkMerge").onclick = () => go(false);
+}
+function exportStd(){
+  const out = {format: "ktx-meas-standards", version: 1, title: "내 기준값", created: today(), items: S.items.map(i => ({...i}))};
+  download(`기준값_${today()}.json`, JSON.stringify(out, null, 2), "application/json");
+}
+function exportBackup(){
+  const out = {format: "ktx-meas-backup", version: 1, created: today(), items: S.items, records: S.records.map(r => ({...r, value: r.value === Infinity ? "OL" : r.value}))};
+  download(`측정앱_백업_${today()}.json`, JSON.stringify(out), "application/json");
+  ls.set("last-backup", today()); toast("백업 파일을 저장했어요");
+}
+function moreSheet(){
+  const lb = ls.get("last-backup", "");
+  openModal(`<div class="sheet-head"><h2>백업·기타</h2><button class="btn sm" data-close>닫기</button></div>
+    <div class="card"><b>전체 백업</b><div class="muted">항목과 기록을 한 파일로 저장합니다. 기기를 바꾸거나 앱 데이터가 지워질 때를 대비해 가끔 해 두세요.${lb ? ` 마지막 백업: ${esc(lb)}` : ""}</div>
+      <div class="row" style="margin-top:8px"><button class="btn primary" id="bk">백업 파일 저장</button><button class="btn" id="rs">백업 되살리기</button></div></div>
+    <div class="card"><b>기준값만 내보내기</b><div class="muted">항목·기준값만 저장합니다. 태블릿 같은 다른 기기에 같은 기준값을 넣을 때 씁니다.</div>
+      <div class="row" style="margin-top:8px"><button class="btn" id="ex">기준값 파일 저장</button></div></div>
+    <div class="card"><b>연습용 예시 항목</b><div class="muted">[예시]가 붙은 항목 몇 개를 넣거나 지웁니다. 값은 연습용이라 실제 기준이 아니에요.</div>
+      <div class="row" style="margin-top:8px"><button class="btn" id="exAdd">예시 넣기</button><button class="btn danger" id="exDel">예시 모두 지우기</button></div></div>
+    <div class="card"><b>모두 지우기</b><div class="muted">이 기기에 있는 항목과 기록을 전부 지웁니다.</div>
+      <div class="row" style="margin-top:8px"><button class="btn danger" id="wipe">모두 지우기</button></div></div>
+    <div class="hint">모든 데이터는 이 기기 안(브라우저 저장소)에만 있고 인터넷으로 보내지 않습니다. 파일로 저장한 백업·기준값 파일도 보안 자료이니 함부로 공유하지 마세요.</div>`);
+  $("#bk").onclick = exportBackup; $("#ex").onclick = exportStd;
+  $("#rs").onclick = () => { closeModal(); pickFile(importFile); };
+  $("#exAdd").onclick = () => { closeModal(); addExamples(); };
+  $("#exDel").onclick = async () => { const ids = S.items.filter(i => i.id.startsWith("example-")).map(i => i.id); await DB.delMany("items", ids); const rids = S.records.filter(r => r.itemId.startsWith("example-")).map(r => r.id); await DB.delMany("records", rids); await loadAll(); closeModal(); toast("예시를 지웠어요"); render(); };
+  $("#wipe").onclick = async () => { if (!confirm("항목과 기록을 모두 지울까요? 되돌릴 수 없어요.")) return; if (!confirm("정말 지울까요? 백업이 없으면 복구할 수 없어요.")) return; await DB.clear("items"); await DB.clear("records"); await loadAll(); S.cur = null; closeModal(); render(); };
+}
+const EXAMPLES = [
+  {id: "example-ir", name: "[예시] 전동기 절연저항", group: "예시", method: "ir_temp", unit: "MΩ", normal: {min: 10}, caution: {min: 1}, params: {refTemp: 20, halveEvery: 10}, points: ["1번", "2번", "3번", "4번"], condition: "연습용 값 — 실제 기준 아님", reviewed: true},
+  {id: "example-coil", name: "[예시] 릴레이 코일 저항", group: "예시", method: "deviation", unit: "Ω", normal: {min: -10, max: 10}, caution: {min: -15, max: 15}, params: {ref: 1200}, condition: "연습용 값 — 실제 기준 아님", reviewed: true},
+  {id: "example-batt", name: "[예시] 축전지 전압", group: "예시", method: "direct", unit: "V", normal: {min: 100, max: 115}, caution: {min: 95, max: 118}, condition: "연습용 값 — 실제 기준 아님", reviewed: false, source: {doc: "예시 매뉴얼", page: "12", quote: "축전지 전압은 100~115 V 이어야 한다. (연습용 문장)"}},
+  {id: "example-vd", name: "[예시] 제어회로 전압강하", group: "예시", method: "vdrop", unit: "V", normal: {max: 5}, caution: {max: 8}, params: {nominal: 100}, condition: "연습용 값 — 실제 기준 아님", reviewed: true},
+  {id: "example-wind", name: "[예시] 권선 저항 불평형", group: "예시", method: "imbalance", unit: "mΩ", normal: {max: 2}, caution: {max: 5}, params: {phases: "U,V,W"}, condition: "연습용 값 — 실제 기준 아님", reviewed: true},
+  {id: "example-ct", name: "[예시] 커넥터 접촉 저항", group: "예시", method: "contact", unit: "Ω", normal: {max: 0.1}, caution: {max: 0.5}, condition: "연습용 값 — 실제 기준 아님", reviewed: true},
+];
+async function addExamples(){ await DB.putMany("items", EXAMPLES.map(normItem)); await loadAll(); toast("연습용 예시 항목을 넣었어요"); render(); }
+
+/* ===== 모달 ===== */
+function openModal(html){ closeModal(); const d = document.createElement("div"); d.className = "modal"; d.id = "modal"; d.innerHTML = `<div class="sheet">${html}</div>`;
+  d.addEventListener("click", e => { if (e.target === d || e.target.closest("[data-close]")) closeModal(); }); document.body.appendChild(d); document.body.style.overflow = "hidden"; }
+function closeModal(){ const d = $("#modal"); if (d) d.remove(); document.body.style.overflow = ""; }
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeModal(); });
+
+/* ===== 시작 ===== */
+(async () => {
+  try { await DB.open(); await loadAll(); } catch (e) { $("#main").innerHTML = `<div class="empty">기기 저장소를 열 수 없어요.<br>${esc(e && e.message)}</div>`; return; }
+  try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch {}
+  render();
+  const upd = () => { $("#offline").textContent = navigator.onLine ? "" : "오프라인"; }; addEventListener("online", upd); addEventListener("offline", upd); upd();
+  if ("serviceWorker" in navigator && window.isSecureContext && location.protocol !== "file:") navigator.serviceWorker.register("sw.js").catch(() => {});
+})();
+</script>
+</body>
+</html>
