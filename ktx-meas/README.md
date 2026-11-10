@@ -46,9 +46,10 @@ KTX 전기 점검 측정값을 넣으면 정상·주의·이상을 색으로 보
 |---|---|---|---|
 | `direct` | 측정값 그대로 | 측정값 (unit) | — |
 | `ir_temp` | 절연저항 온도 보정 | 기준온도 환산값 = R × 2^((t − refTemp) / halveEvery) | `refTemp`(기본 20), `halveEvery`(기본 10) |
-| `deviation` | 기준값 대비 % | (측정 − ref) / ref × 100 | `ref` (기준값, unit) |
+| `deviation` | 기준값 대비 % | (측정 − ref) / ref × 100 | `ref` (기준값, unit), `cuRef` (선택: 구리 코일 온도 환산 기준온도, R×(234.5+cuRef)/(234.5+t)) |
 | `vdrop` | 전압강하율 | (공급 − 부하) / (nominal 또는 공급) × 100 | `nominal` (선택) |
 | `imbalance` | 상간 불평형 | (최대 − 최소) / 평균 × 100 | `phases` 예 "U,V,W" |
+| `formula` | 여러 값으로 계산 | 공식(+ − × ÷ 괄호) 결과 | `inputs` 예 "KO,KC", `expr` 예 "KO-KC" |
 | `contact` | 단선·접촉불량 | 측정 − 리드선 저항 (OL이면 단선) | — |
 
 사진은 파일 안에 data URL(png/jpeg/webp)로만 넣습니다. 인터넷 주소(https://…)로 된 사진은 앱이 무시합니다. 앱에서 직접 찍은 사진을 항목에 추가할 수도 있습니다(긴 변 1600px로 줄여 저장).

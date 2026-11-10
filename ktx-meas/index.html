@@ -175,6 +175,7 @@ const METHODS = {
   deviation: {name: "기준값과 차이(%) 판정", short: "기준 대비 %", hint: "코일 저항처럼 '기준값 ±10%' 식으로 정해진 항목. 기준 범위는 % 로 넣습니다."},
   vdrop:     {name: "전압강하(%) 판정", short: "전압강하", hint: "공급 쪽 전압과 부하 쪽 전압을 넣으면 강하율(%)로 판정합니다. 기준 범위는 % 로 넣습니다."},
   imbalance: {name: "상간 불평형(%) 판정", short: "불평형", hint: "U·V·W 처럼 여러 값을 넣으면 (최대−최소)÷평균 으로 불평형률을 구해 판정합니다. 기준 범위는 % 로 넣습니다."},
+  formula:   {name: "여러 값으로 계산 (공식)", short: "공식", hint: "여러 측정값을 넣으면 정해 둔 공식으로 계산해서 판정합니다. 예) 입력값 KO,KC / 공식 KO-KC"},
   contact:   {name: "단선·접촉불량 (저항)", short: "단선/접촉", hint: "선이나 접점 저항을 재서 정상 저항과 비교합니다. OL(무한대)이면 단선, 정상보다 많이 높으면 접촉불량 의심입니다."},
 };
 const resultUnit = it => (["deviation", "vdrop", "imbalance"].includes(it.method) ? "%" : (it.unit || ""));
@@ -207,9 +208,11 @@ function evaluate(it, inp){
       else { v = r; detail = r === Infinity ? "무한대(OL) — 보정 없이 판정" : "온도를 안 넣어서 보정 없이 판정"; }
       break; }
     case "deviation": {
-      const x = num(inp.x), ref = num(p.ref);
+      let x = num(inp.x); const ref = num(p.ref);
       if (!Number.isFinite(x) || !Number.isFinite(ref) || ref === 0) return null;
-      v = (x - ref) / ref * 100; detail = `측정 ${fmt(x)} ${it.unit||""} / 기준 ${fmt(ref)} ${it.unit||""} → 차이 ${v >= 0 ? "+" : ""}${fmt(v, 1)}%`;
+      let pre = ""; const t = num(inp.temp);
+      if (has(p.cuRef) && Number.isFinite(t)){ const x0 = x; x = x * (234.5 + +p.cuRef) / (234.5 + t); pre = `${fmt(x0)} ${it.unit||""} (${fmt(t)}℃) → ${p.cuRef}℃ 환산 ${fmt(x)} ${it.unit||""} · `; }
+      v = (x - ref) / ref * 100; detail = `${pre}측정 ${fmt(x)} ${it.unit||""} / 기준 ${fmt(ref)} ${it.unit||""} → 차이 ${v >= 0 ? "+" : ""}${fmt(v, 1)}%`;
       break; }
     case "vdrop": {
       const vs = num(inp.vs), ve = num(inp.ve);
@@ -224,6 +227,12 @@ function evaluate(it, inp){
       const avg = xs.reduce((a, b) => a + b, 0) / xs.length; if (!avg) return null;
       v = (Math.max(...xs) - Math.min(...xs)) / avg * 100;
       detail = `최대 ${fmt(Math.max(...xs))} · 최소 ${fmt(Math.min(...xs))} · 평균 ${fmt(avg)} ${it.unit||""} → 불평형 ${fmt(v, 2)}%`;
+      break; }
+    case "formula": {
+      const names = fNames(it); const vals = {};
+      for (const n of names){ const x = num((inp.f || {})[n]); if (!Number.isFinite(x)) return null; vals[n] = x; }
+      v = fEval(p.expr, vals); if (!Number.isFinite(v)) return null;
+      detail = `${p.expr} = ${fmt(v)} ${it.unit || ""} (${names.map(n => n + " " + fmt(vals[n])).join(", ")})`;
       break; }
     case "contact": {
       const r = num(inp.r), lead = has(inp.lead) ? num(inp.lead) : 0;
@@ -249,6 +258,16 @@ function evaluate(it, inp){
     }
   }
   return {value: v, unit: u, verdict, label, detail, inputs: inp, ...extra};
+}
+const fNames = it => String((it.params && it.params.inputs) || "").split(/[,\s]+/).filter(n => /^[A-Za-z가-힣_][A-Za-z0-9가-힣_]*$/.test(n));
+// 공식 계산: 숫자, 입력값 이름, + - * / ( ) 만 허용하는 작은 계산기 (eval 안 씀)
+function fEval(expr, vals){
+  const toks = String(expr || "").match(/\d+(?:\.\d+)?|[A-Za-z가-힣_][A-Za-z0-9가-힣_]*|[-+*/()×÷−]/g) || []; let i = 0;
+  const peek = () => toks[i], next = () => toks[i++];
+  const prim = () => { const t = next(); if (t === "(") { const v = add(); next(); return v; } if (t === "-" || t === "−") return -prim(); if (/^\d/.test(t)) return +t; if (t in vals) return vals[t]; return NaN; };
+  const mul = () => { let v = prim(); while (["*", "/", "×", "÷"].includes(peek())) { const o = next(), r = prim(); v = (o === "*" || o === "×") ? v * r : v / r; } return v; };
+  const add = () => { let v = mul(); while (["+", "-", "−"].includes(peek())) { const o = next(), r = mul(); v = o === "+" ? v + r : v - r; } return v; };
+  const v = add(); return i === toks.length ? v : NaN;
 }
 const phaseLabels = it => { const s = (it.params && it.params.phases) || "U,V,W"; const a = String(s).split(/[,\s/]+/).filter(Boolean); return a.length >= 2 ? a : ["U", "V", "W"]; };
 function whyText(it, r){
@@ -313,15 +332,17 @@ function inputFields(it, inp, pre){
   const numIn = (k, label, ph, ol) => `<label class="f">${label}</label><div class="inrow"><input class="t" inputmode="decimal" id="${pre}${k}" data-k="${k}" placeholder="${esc(ph || "")}" value="${esc(inp[k] ?? "")}" autocomplete="off">${ol ? `<button class="btn" data-ol="${k}" type="button">OL</button>` : ""}</div>`;
   switch (it.method){
     case "ir_temp": return numIn("r", `절연저항 (${u || "MΩ"})`, "측정값", true) + numIn("temp", `측정할 때 온도 (℃) — 기준 ${has(p.refTemp) ? p.refTemp : 20}℃로 환산`, "예: 28");
-    case "deviation": return numIn("x", `측정값 (${u})`, `기준 ${has(p.ref) ? fmt(+p.ref) : "?"} ${it.unit||""}`);
+    case "deviation": return numIn("x", `측정값 (${u})`, `기준 ${has(p.ref) ? fmt(+p.ref) : "?"} ${it.unit||""}`) + (has(p.cuRef) ? numIn("temp", `측정할 때 온도 (℃) — 구리 코일 ${p.cuRef}℃로 환산`, "예: 25") : "");
     case "vdrop": return `<div class="grid2"><div>${numIn("vs", "공급 쪽 전압 (V)", "예: 100")}</div><div>${numIn("ve", "부하 쪽 전압 (V)", "예: 96")}</div></div>`;
     case "imbalance": return `<label class="f">각 상 측정값 (${u})</label><div class="grid3">${phaseLabels(it).map((l, i) => `<div><div class="muted">${esc(l)}</div><input class="t" inputmode="decimal" id="${pre}ph${i}" data-ph="${i}" value="${esc((inp.ph || [])[i] ?? "")}" autocomplete="off"></div>`).join("")}</div>`;
-    case "contact": return numIn("r", `측정 저항 (${u || "Ω"})`, "끊겼으면 OL", true) + numIn("lead", "리드선 저항 (Ω, 선택)", "측정기 리드끼리 맞대고 잰 값");
+    case "formula": return `<div class="grid2">${fNames(it).map(n => `<div><label class="f">${esc(n)}</label><input class="t" inputmode="decimal" data-fk="${esc(n)}" value="${esc((inp.f || {})[n] ?? "")}" autocomplete="off"></div>`).join("")}</div><div class="hint">공식: ${esc(p.expr || "")}</div>`;
+    case "contact": return numIn("r", `측정 저항 (${u || "Ω"})`, "끊겼으면 OL", true) + numIn("lead", `리드선 저항 (${u || "Ω"}, 선택)`, "측정기 리드끼리 맞대고 잰 값");
     default: return numIn("x", `측정값 ${u ? "(" + u + ")" : ""}`, "측정값", it.unit && /Ω/.test(it.unit));
   }
 }
 function bindInputs(root, inp, onChange){
   root.querySelectorAll("[data-k]").forEach(el => el.oninput = () => { inp[el.dataset.k] = el.value; onChange(); });
+  root.querySelectorAll("[data-fk]").forEach(el => el.oninput = () => { (inp.f = inp.f || {})[el.dataset.fk] = el.value; onChange(); });
   root.querySelectorAll("[data-ph]").forEach(el => el.oninput = () => { (inp.ph = inp.ph || [])[+el.dataset.ph] = el.value; onChange(); });
   root.querySelectorAll("[data-ol]").forEach(b => b.onclick = () => { const k = b.dataset.ol; inp[k] = "OL"; const el = root.querySelector(`[data-k="${k}"]`); if (el) el.value = "OL"; onChange(); });
 }
@@ -359,7 +380,7 @@ function renderMeasureForm(){
       <div class="std"><b>${esc(stdText(it))}</b></div>
       ${it.method === "deviation" ? `<div class="std">기준값 ${esc(fmt(+it.params?.ref))} ${esc(it.unit || "")}</div>` : ""}
       ${it.condition ? `<div class="std">측정 조건: ${esc(it.condition)}</div>` : ""}
-      ${it.source?.doc ? `<div class="std">출처: ${esc(it.source.doc)}${it.source.page ? " " + esc(it.source.page) + "쪽" : ""}</div>` : ""}
+      ${it.source?.doc ? `<div class="std">출처: ${esc(it.source.doc)}${it.source.page ? " " + pageText(it.source.page) : ""}</div>` : ""}
       ${it.reviewed ? "" : `<div class="warn">이 기준값은 아직 매뉴얼과 맞는지 확인하지 않았어요. 판정은 참고만 하고, 기준값 탭에서 확인해 주세요.</div>`}
     </div>
     ${howtoHTML(it)}
@@ -603,7 +624,7 @@ function renderItems(){
     <div style="margin-top:10px">${list.map(i => `<div class="card click" data-ed="${i.id}">
       <div class="row"><span class="it-name grow">${esc(i.name)}</span>${i.reviewed ? `<span class="tag ok">확인함</span>` : `<span class="tag rev">확인 전</span>`}</div>
       <div class="std">${esc(i.group || "기타")} · ${esc(METHODS[i.method]?.short || "")} · ${esc(stdText(i))}${hasHowto(i) ? " · 📋 측정법" + (i.images?.length ? ` 📷${i.images.length}` : "") : ""}</div>
-      ${i.source?.doc ? `<div class="std">📖 ${esc(i.source.doc)}${i.source.page ? " " + esc(i.source.page) + "쪽" : ""}</div>` : ""}</div>`).join("") || (S.items.length ? `<div class="empty">찾는 항목이 없어요.</div>` : `<div class="empty">항목이 없어요.<br><br><button class="btn sm" id="addEx2">연습용 예시 항목 넣어 보기</button></div>`)}</div>`;
+      ${i.source?.doc ? `<div class="std">📖 ${esc(i.source.doc)}${i.source.page ? " " + pageText(i.source.page) : ""}</div>` : ""}</div>`).join("") || (S.items.length ? `<div class="empty">찾는 항목이 없어요.</div>` : `<div class="empty">항목이 없어요.<br><br><button class="btn sm" id="addEx2">연습용 예시 항목 넣어 보기</button></div>`)}</div>`;
   const iq = $("#iq"); iq.oninput = () => { S.itemFilter = iq.value; const p = iq.selectionStart; renderItems(); const x = $("#iq"); x.focus(); x.setSelectionRange(p, p); };
   m.querySelectorAll("[data-ig]").forEach(b => b.onclick = () => { S.itemGroup = b.dataset.ig; renderItems(); });
   m.querySelectorAll("[data-ed]").forEach(b => b.onclick = () => editItem(itemById(b.dataset.ed)));
@@ -623,15 +644,16 @@ function editItem(it){
     const mt = d.method; const pu = ["deviation", "vdrop", "imbalance"].includes(mt) ? "%" : (d.unit || "단위");
     openModal(`<div class="sheet-head"><h2>${isNew ? "항목 추가" : "항목 보기·고치기"}</h2><button class="btn sm" data-close>닫기</button></div>
       ${!isNew && !d.reviewed ? `<div class="warn">아직 확인 전이에요. 아래 <b>매뉴얼 원문</b>과 값이 맞는지 보고, 맞으면 맨 아래 <b>맞아요, 저장</b>을 눌러 주세요.</div>` : ""}
-      ${d.source.quote ? `<label class="f">매뉴얼 원문 ${d.source.doc ? "(" + esc(d.source.doc) + (d.source.page ? " " + esc(d.source.page) + "쪽" : "") + ")" : ""}</label><div class="quote">${esc(d.source.quote)}</div>` : ""}
+      ${d.source.quote ? `<label class="f">매뉴얼 원문 ${d.source.doc ? "(" + esc(d.source.doc) + (d.source.page ? " " + pageText(d.source.page) : "") + ")" : ""}</label><div class="quote">${esc(d.source.quote)}</div>` : ""}
       <label class="f">항목 이름</label><input class="t" id="e_name" value="${esc(d.name)}" placeholder="예: 견인전동기 절연저항">
       <div class="grid2"><div><label class="f">분류</label><input class="t" id="e_group" list="grpList" value="${esc(d.group)}" placeholder="예: 견인전동기"><datalist id="grpList">${groups().map(g => `<option value="${esc(g)}">`).join("")}</datalist></div>
         <div><label class="f">측정값 단위</label><input class="t" id="e_unit" list="unitList" value="${esc(d.unit)}" placeholder="예: MΩ"><datalist id="unitList">${["MΩ", "kΩ", "Ω", "mΩ", "V", "mV", "A", "mA", "Hz", "℃", "mm", "N·m", "bar", "kPa"].map(u => `<option value="${u}">`).join("")}</datalist></div></div>
       <label class="f">판정 방법</label><select class="t" id="e_method">${Object.entries(METHODS).map(([k, v]) => `<option value="${k}" ${mt === k ? "selected" : ""}>${v.name}</option>`).join("")}</select>
       <div class="hint">${esc(METHODS[mt].hint)}</div>
       ${mt === "ir_temp" ? `<div class="grid2"><div><label class="f">기준 온도 (℃)</label><input class="t" inputmode="decimal" id="p_refTemp" value="${esc(d.params.refTemp ?? 20)}"></div><div><label class="f">절반이 되는 온도 간격 (℃)</label><input class="t" inputmode="decimal" id="p_halveEvery" value="${esc(d.params.halveEvery ?? 10)}"></div></div>` : ""}
-      ${mt === "deviation" ? `<label class="f">기준값 (${esc(d.unit || "단위")})</label><input class="t" inputmode="decimal" id="p_ref" value="${esc(d.params.ref ?? "")}" placeholder="예: 12.5">` : ""}
+      ${mt === "deviation" ? `<label class="f">기준값 (${esc(d.unit || "단위")})</label><input class="t" inputmode="decimal" id="p_ref" value="${esc(d.params.ref ?? "")}" placeholder="예: 12.5"><label class="f">구리 코일 온도 환산 기준온도 (℃, 선택 — 넣으면 온도 입력칸이 생김)</label><input class="t" inputmode="decimal" id="p_cuRef" value="${esc(d.params.cuRef ?? "")}" placeholder="예: 20">` : ""}
       ${mt === "vdrop" ? `<label class="f">정격 전압 (V, 선택 — 넣으면 정격 기준 %, 비우면 공급 전압 기준 %)</label><input class="t" inputmode="decimal" id="p_nominal" value="${esc(d.params.nominal ?? "")}">` : ""}
+      ${mt === "formula" ? `<div class="grid2"><div><label class="f">입력값 이름 (쉼표로 구분)</label><input class="t" id="p_inputs" value="${esc(d.params.inputs ?? "")}" placeholder="예: KO,KC"></div><div><label class="f">공식 (+ − × ÷ 괄호)</label><input class="t" id="p_expr" value="${esc(d.params.expr ?? "")}" placeholder="예: KO-KC"></div></div>` : ""}
       ${mt === "imbalance" ? `<label class="f">상 이름 (쉼표로 구분)</label><input class="t" id="p_phases" value="${esc(d.params.phases ?? "U,V,W")}">` : ""}
       <h3>판정 기준 (${esc(pu)})</h3>
       ${bandInputs("n_", d.normal, "정상")}
@@ -658,8 +680,9 @@ function editItem(it){
       d.name = v("e_name"); d.group = v("e_group"); d.unit = v("e_unit");
       const nb = x => { const s = v(x); return s === "" || s === undefined ? undefined : num(s); };
       d.normal = clean({min: nb("n_min"), max: nb("n_max")}); d.caution = clean({min: nb("c_min"), max: nb("c_max")});
-      ["refTemp", "halveEvery", "ref", "nominal"].forEach(k => { if ($("#p_" + k)){ const s = v("p_" + k); if (s === "") delete d.params[k]; else d.params[k] = num(s); } });
+      ["refTemp", "halveEvery", "ref", "nominal", "cuRef"].forEach(k => { if ($("#p_" + k)){ const s = v("p_" + k); if (s === "") delete d.params[k]; else d.params[k] = num(s); } });
       if ($("#p_phases")) d.params.phases = v("p_phases");
+      if ($("#p_inputs")) { d.params.inputs = v("p_inputs"); d.params.expr = v("p_expr"); }
       d.points = v("e_points").split(/[,，]/).map(s => s.trim()).filter(Boolean);
       d.condition = v("e_cond"); d.note = $("#e_note").value.trim();
       d.where = $("#e_where").value.trim(); d.howto = $("#e_howto").value.split("\n").map(x => x.replace(/^\s*(\d+[.)]|[-•·])\s*/, "").trim()).filter(Boolean);
@@ -719,7 +742,7 @@ function normItem(x){
     where: String(x.where || ""), howto: Array.isArray(x.howto) ? x.howto.map(String).filter(Boolean) : (x.howto ? String(x.howto).split("\n").filter(Boolean) : []),
     images: (Array.isArray(x.images) ? x.images : []).map(im => typeof im === "string" ? {src: im} : im).map(im => ({src: imgPool[im.ref] || im.src, caption: String(im.caption || ""), page: im.page !== undefined ? String(im.page) : undefined}))
       .filter(im => typeof im.src === "string" && /^data:image\/(png|jpe?g|webp|gif);base64,/.test(im.src)).map(clean)};
-  const p = x.params || {}; ["refTemp", "halveEvery", "ref", "nominal"].forEach(k => { if (has(p[k])) it.params[k] = +p[k]; }); if (p.phases) it.params.phases = String(p.phases);
+  const p = x.params || {}; ["refTemp", "halveEvery", "ref", "nominal", "cuRef"].forEach(k => { if (has(p[k])) it.params[k] = +p[k]; }); if (p.phases) it.params.phases = String(p.phases); if (p.inputs) it.params.inputs = String(p.inputs); if (p.expr) it.params.expr = String(p.expr);
   return it;
 }
 const stdKey = a => JSON.stringify([a.name, a.group, a.method, a.unit, a.normal, a.caution, a.params, a.points, a.condition, a.where || "", a.howto || [], (a.images || []).map(im => (im.caption || "") + im.src.length + im.src.slice(-40))]);
@@ -804,6 +827,7 @@ const EXAMPLES = [
 async function addExamples(){ await DB.putMany("items", EXAMPLES.map(normItem)); await loadAll(); toast("연습용 예시 항목을 넣었어요"); render(); }
 
 /* ===== 측정법·사진 ===== */
+const pageText = pg => esc(/^\d+$/.test(String(pg)) ? pg + "쪽" : pg);
 const hasHowto = it => !!(it.where || (it.howto && it.howto.length) || (it.images && it.images.length));
 function howtoHTML(it){
   if (!hasHowto(it)) return "";
@@ -811,7 +835,7 @@ function howtoHTML(it){
   return `<details class="card howto" ${open ? "open" : ""} id="howto"><summary>📋 측정법·측정 부위${it.images?.length ? ` · 사진 ${it.images.length}장` : ""}</summary>
     ${it.where ? `<div style="margin-top:6px"><b>측정 부위</b><div style="white-space:pre-wrap;line-height:1.6">${esc(it.where)}</div></div>` : ""}
     ${it.howto?.length ? `<div style="margin-top:8px"><b>측정 순서</b><ol>${it.howto.map(h => `<li>${esc(h)}</li>`).join("")}</ol></div>` : ""}
-    ${it.images?.length ? `<div class="imgs">${it.images.map((im, i) => `<figure data-img="${i}"><img src="${esc(im.src)}" alt="${esc(im.caption || "사진")}" loading="lazy">${im.caption || im.page ? `<figcaption>${esc(im.caption || "")}${im.page ? ` (${esc(im.page)}쪽)` : ""}</figcaption>` : ""}</figure>`).join("")}</div>` : ""}
+    ${it.images?.length ? `<div class="imgs">${it.images.map((im, i) => `<figure data-img="${i}"><img src="${esc(im.src)}" alt="${esc(im.caption || "사진")}" loading="lazy">${im.caption || im.page ? `<figcaption>${esc(im.caption || "")}${im.page ? ` (${pageText(im.page)})` : ""}</figcaption>` : ""}</figure>`).join("")}</div>` : ""}
   </details>`;
 }
 document.addEventListener("click", e => {
