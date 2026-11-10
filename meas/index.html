@@ -80,6 +80,14 @@ h3{font-size:15px;margin:12px 0 6px}
 .tag.rev{background:var(--warn-bg);color:var(--warn)}
 .inrow{display:flex;gap:6px}
 .inrow input{flex:1;min-width:0}
+.howto ol{margin:6px 0 0;padding-left:22px;line-height:1.6}
+.howto .imgs{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;margin-top:10px}
+.howto figure{margin:0;background:var(--bg);border:1px solid var(--line);border-radius:8px;overflow:hidden;cursor:zoom-in}
+.howto figure img{width:100%;height:120px;object-fit:contain;display:block;background:#fff}
+.howto figcaption{font-size:12px;color:var(--sub);padding:4px 6px;line-height:1.4}
+.imged{display:flex;gap:8px;align-items:center;margin-top:8px}
+.imged img{width:72px;height:56px;object-fit:contain;background:#fff;border:1px solid var(--line);border-radius:6px;flex:none}
+.viewer img{width:100%;height:auto;background:#fff;border-radius:8px}
 .quote{border-left:3px solid var(--line);padding:4px 10px;color:var(--sub);font-size:14px;white-space:pre-wrap;margin-top:6px}
 table.rec{width:100%;border-collapse:collapse;font-size:14px}
 table.rec td,table.rec th{padding:7px 4px;border-bottom:1px solid var(--line);text-align:left}
@@ -354,6 +362,7 @@ function renderMeasureForm(){
       ${it.source?.doc ? `<div class="std">출처: ${esc(it.source.doc)}${it.source.page ? " " + esc(it.source.page) + "쪽" : ""}</div>` : ""}
       ${it.reviewed ? "" : `<div class="warn">이 기준값은 아직 매뉴얼과 맞는지 확인하지 않았어요. 판정은 참고만 하고, 기준값 탭에서 확인해 주세요.</div>`}
     </div>
+    ${howtoHTML(it)}
     <div class="wide2"><div>
       <div class="grid2">
         <div><label class="f">차량 번호</label><input class="t" id="car" list="carList" value="${esc(inp.car)}" placeholder="예: 12편성 3호차"><datalist id="carList">${cars.map(c => `<option value="${esc(c)}">`).join("")}</datalist></div>
@@ -593,7 +602,7 @@ function renderItems(){
     <div class="chips" style="margin-top:8px"><button class="chip ${!S.itemGroup ? "on" : ""}" data-ig="">전체 ${S.items.length}</button>${n ? `<button class="chip ${S.itemGroup === "__rev" ? "on" : ""}" data-ig="__rev">확인 전 ${n}</button>` : ""}${groups().map(g => `<button class="chip ${S.itemGroup === g ? "on" : ""}" data-ig="${esc(g)}">${esc(g)}</button>`).join("")}</div>
     <div style="margin-top:10px">${list.map(i => `<div class="card click" data-ed="${i.id}">
       <div class="row"><span class="it-name grow">${esc(i.name)}</span>${i.reviewed ? `<span class="tag ok">확인함</span>` : `<span class="tag rev">확인 전</span>`}</div>
-      <div class="std">${esc(i.group || "기타")} · ${esc(METHODS[i.method]?.short || "")} · ${esc(stdText(i))}</div>
+      <div class="std">${esc(i.group || "기타")} · ${esc(METHODS[i.method]?.short || "")} · ${esc(stdText(i))}${hasHowto(i) ? " · 📋 측정법" + (i.images?.length ? ` 📷${i.images.length}` : "") : ""}</div>
       ${i.source?.doc ? `<div class="std">📖 ${esc(i.source.doc)}${i.source.page ? " " + esc(i.source.page) + "쪽" : ""}</div>` : ""}</div>`).join("") || (S.items.length ? `<div class="empty">찾는 항목이 없어요.</div>` : `<div class="empty">항목이 없어요.<br><br><button class="btn sm" id="addEx2">연습용 예시 항목 넣어 보기</button></div>`)}</div>`;
   const iq = $("#iq"); iq.oninput = () => { S.itemFilter = iq.value; const p = iq.selectionStart; renderItems(); const x = $("#iq"); x.focus(); x.setSelectionRange(p, p); };
   m.querySelectorAll("[data-ig]").forEach(b => b.onclick = () => { S.itemGroup = b.dataset.ig; renderItems(); });
@@ -630,6 +639,11 @@ function editItem(it){
       <div class="hint">정상 범위 안 → 정상 · 정상은 벗어났지만 주의 범위 안 → 주의 · 둘 다 벗어나면 → 이상.<br>예) 1 MΩ 이상 정상, 0.5~1 MΩ 주의 → 정상 최소 1, 주의 최소 0.5. 주의 단계가 없으면 주의 칸은 비워 두세요.</div>
       <div id="e_chk"></div>
       <label class="f">측정 위치 목록 (쉼표로 구분, 선택)</label><input class="t" id="e_points" value="${esc((d.points || []).join(", "))}" placeholder="예: 1번, 2번, 3번, 4번">
+      <h3>측정법·측정 부위</h3>
+      <label class="f">측정 부위 (어디를 재는지)</label><textarea class="t" id="e_where" placeholder="예: 견인전동기 단자함 U·V·W 단자와 프레임 사이">${esc(d.where || "")}</textarea>
+      <label class="f">측정 순서 (한 줄에 하나씩)</label><textarea class="t" id="e_howto" style="min-height:110px" placeholder="예:\n1. 차단기 OFF, 접지 확인\n2. 메거 DC 1000V로 1분간 측정">${esc((d.howto || []).join("\n"))}</textarea>
+      <label class="f">사진</label><div id="e_imgs"></div>
+      <button class="btn sm" id="e_addimg" type="button" style="margin-top:8px">+ 사진 추가</button>
       <label class="f">측정 조건·측정기 (선택)</label><input class="t" id="e_cond" value="${esc(d.condition || "")}" placeholder="예: DC 1000V 메거, 1분값">
       <label class="f">메모 (선택)</label><textarea class="t" id="e_note">${esc(d.note || "")}</textarea>
       <details ${d.source.doc || d.source.quote ? "open" : ""}><summary>출처 (매뉴얼)</summary>
@@ -648,8 +662,14 @@ function editItem(it){
       if ($("#p_phases")) d.params.phases = v("p_phases");
       d.points = v("e_points").split(/[,，]/).map(s => s.trim()).filter(Boolean);
       d.condition = v("e_cond"); d.note = $("#e_note").value.trim();
+      d.where = $("#e_where").value.trim(); d.howto = $("#e_howto").value.split("\n").map(x => x.replace(/^\s*(\d+[.)]|[-•·])\s*/, "").trim()).filter(Boolean);
+      d.images = (d.images || []).map((im, i) => ({...im, caption: $("#e_cap" + i) ? $("#e_cap" + i).value.trim() : im.caption}));
       d.source = clean({doc: v("s_doc"), page: v("s_page"), quote: $("#s_quote").value.trim()});
     };
+    const drawImgs = () => { $("#e_imgs").innerHTML = (d.images || []).map((im, i) => `<div class="imged"><img src="${esc(im.src)}" alt=""><input class="t" id="e_cap${i}" value="${esc(im.caption || "")}" placeholder="사진 설명"><button class="btn sm danger" data-rmimg="${i}" type="button">빼기</button></div>`).join("") || `<div class="muted">사진 없음</div>`;
+      document.querySelectorAll("[data-rmimg]").forEach(b => b.onclick = () => { collect(); d.images.splice(+b.dataset.rmimg, 1); drawImgs(); }); };
+    drawImgs();
+    $("#e_addimg").onclick = () => pickImage(async f => { collect(); try { const src = await shrinkImage(f); (d.images = d.images || []).push({src, caption: ""}); drawImgs(); } catch { toast("사진을 읽을 수 없어요"); } });
     const chk = () => { collect(); const w = checkItem(d); $("#e_chk").innerHTML = w.length ? `<div class="warn">${w.map(esc).join("<br>")}</div>` : ""; };
     document.querySelectorAll(".sheet input, .sheet textarea").forEach(el => el.addEventListener("input", chk)); chk();
     $("#e_method").onchange = e => { collect(); d.method = e.target.value; draw(); };
@@ -695,15 +715,21 @@ function normItem(x){
     caution: clean({min: has(x.caution?.min) ? +x.caution.min : undefined, max: has(x.caution?.max) ? +x.caution.max : undefined}),
     params: {}, points: Array.isArray(x.points) ? x.points.map(String) : [], condition: String(x.condition || ""), note: String(x.note || ""),
     source: clean({doc: x.source?.doc ? String(x.source.doc) : undefined, page: x.source?.page !== undefined ? String(x.source.page) : undefined, quote: x.source?.quote ? String(x.source.quote) : undefined}),
-    reviewed: x.reviewed === true, updated: x.updated || new Date().toISOString()};
+    reviewed: x.reviewed === true, updated: x.updated || new Date().toISOString(),
+    where: String(x.where || ""), howto: Array.isArray(x.howto) ? x.howto.map(String).filter(Boolean) : (x.howto ? String(x.howto).split("\n").filter(Boolean) : []),
+    images: (Array.isArray(x.images) ? x.images : []).map(im => typeof im === "string" ? {src: im} : im).map(im => ({src: imgPool[im.ref] || im.src, caption: String(im.caption || ""), page: im.page !== undefined ? String(im.page) : undefined}))
+      .filter(im => typeof im.src === "string" && /^data:image\/(png|jpe?g|webp|gif);base64,/.test(im.src)).map(clean)};
   const p = x.params || {}; ["refTemp", "halveEvery", "ref", "nominal"].forEach(k => { if (has(p[k])) it.params[k] = +p[k]; }); if (p.phases) it.params.phases = String(p.phases);
   return it;
 }
-const sameStd = (a, b) => JSON.stringify([a.name, a.group, a.method, a.unit, a.normal, a.caution, a.params, a.points, a.condition]) === JSON.stringify([b.name, b.group, b.method, b.unit, b.normal, b.caution, b.params, b.points, b.condition]);
+const stdKey = a => JSON.stringify([a.name, a.group, a.method, a.unit, a.normal, a.caution, a.params, a.points, a.condition, a.where || "", a.howto || [], (a.images || []).map(im => (im.caption || "") + im.src.length + im.src.slice(-40))]);
+const sameStd = (a, b) => stdKey(a) === stdKey(b);
+let imgPool = {};
 async function importFile(f){
   let j; try { j = JSON.parse(await f.text()); } catch { return toast("JSON 파일이 아니에요"); }
   if (j.format === "ktx-meas-backup") return importBackup(j, f.name);
   const arr = Array.isArray(j) ? j : j.items;
+  imgPool = (j && typeof j.images === "object" && !Array.isArray(j.images)) ? j.images : {};
   if (j.format && j.format !== "ktx-meas-standards") return toast("이 앱용 기준값 파일이 아니에요");
   if (!Array.isArray(arr)) return toast("항목(items)이 없는 파일이에요");
   const inc = arr.map(normItem).filter(i => i.name);
@@ -767,7 +793,8 @@ function moreSheet(){
   $("#wipe").onclick = async () => { if (!confirm("항목과 기록을 모두 지울까요? 되돌릴 수 없어요.")) return; if (!confirm("정말 지울까요? 백업이 없으면 복구할 수 없어요.")) return; await DB.clear("items"); await DB.clear("records"); await loadAll(); S.cur = null; closeModal(); render(); };
 }
 const EXAMPLES = [
-  {id: "example-ir", name: "[예시] 전동기 절연저항", group: "예시", method: "ir_temp", unit: "MΩ", normal: {min: 10}, caution: {min: 1}, params: {refTemp: 20, halveEvery: 10}, points: ["1번", "2번", "3번", "4번"], condition: "연습용 값 — 실제 기준 아님", reviewed: true},
+  {id: "example-ir", name: "[예시] 전동기 절연저항", group: "예시", method: "ir_temp", unit: "MΩ", normal: {min: 10}, caution: {min: 1}, params: {refTemp: 20, halveEvery: 10}, points: ["1번", "2번", "3번", "4번"], condition: "연습용 값 — 실제 기준 아님", reviewed: true,
+    where: "전동기 단자함의 U·V·W 단자를 한데 묶은 곳과 전동기 프레임(접지) 사이 (연습용 설명)", howto: ["주회로 차단, 접지 확인", "단자 U·V·W를 짧은 선으로 묶기", "메거 L을 묶은 단자에, E를 프레임에 연결", "1분 뒤 값을 읽고 그때 온도도 적기", "측정 뒤 방전시키기"]},
   {id: "example-coil", name: "[예시] 릴레이 코일 저항", group: "예시", method: "deviation", unit: "Ω", normal: {min: -10, max: 10}, caution: {min: -15, max: 15}, params: {ref: 1200}, condition: "연습용 값 — 실제 기준 아님", reviewed: true},
   {id: "example-batt", name: "[예시] 축전지 전압", group: "예시", method: "direct", unit: "V", normal: {min: 100, max: 115}, caution: {min: 95, max: 118}, condition: "연습용 값 — 실제 기준 아님", reviewed: false, source: {doc: "예시 매뉴얼", page: "12", quote: "축전지 전압은 100~115 V 이어야 한다. (연습용 문장)"}},
   {id: "example-vd", name: "[예시] 제어회로 전압강하", group: "예시", method: "vdrop", unit: "V", normal: {max: 5}, caution: {max: 8}, params: {nominal: 100}, condition: "연습용 값 — 실제 기준 아님", reviewed: true},
@@ -775,6 +802,34 @@ const EXAMPLES = [
   {id: "example-ct", name: "[예시] 커넥터 접촉 저항", group: "예시", method: "contact", unit: "Ω", normal: {max: 0.1}, caution: {max: 0.5}, condition: "연습용 값 — 실제 기준 아님", reviewed: true},
 ];
 async function addExamples(){ await DB.putMany("items", EXAMPLES.map(normItem)); await loadAll(); toast("연습용 예시 항목을 넣었어요"); render(); }
+
+/* ===== 측정법·사진 ===== */
+const hasHowto = it => !!(it.where || (it.howto && it.howto.length) || (it.images && it.images.length));
+function howtoHTML(it){
+  if (!hasHowto(it)) return "";
+  const open = ls.get("howto-open", true);
+  return `<details class="card howto" ${open ? "open" : ""} id="howto"><summary>📋 측정법·측정 부위${it.images?.length ? ` · 사진 ${it.images.length}장` : ""}</summary>
+    ${it.where ? `<div style="margin-top:6px"><b>측정 부위</b><div style="white-space:pre-wrap;line-height:1.6">${esc(it.where)}</div></div>` : ""}
+    ${it.howto?.length ? `<div style="margin-top:8px"><b>측정 순서</b><ol>${it.howto.map(h => `<li>${esc(h)}</li>`).join("")}</ol></div>` : ""}
+    ${it.images?.length ? `<div class="imgs">${it.images.map((im, i) => `<figure data-img="${i}"><img src="${esc(im.src)}" alt="${esc(im.caption || "사진")}" loading="lazy">${im.caption || im.page ? `<figcaption>${esc(im.caption || "")}${im.page ? ` (${esc(im.page)}쪽)` : ""}</figcaption>` : ""}</figure>`).join("")}</div>` : ""}
+  </details>`;
+}
+document.addEventListener("click", e => {
+  const f = e.target.closest("#howto [data-img]"); if (!f || !S.cur) return;
+  const it = itemById(S.cur); const im = it && it.images[+f.dataset.img]; if (!im) return;
+  openModal(`<div class="sheet-head"><h2>${esc(im.caption || it.name)}</h2><button class="btn sm" data-close>닫기</button></div><div class="viewer"><img src="${esc(im.src)}" alt=""></div><div class="hint">두 손가락으로 벌려서 크게 볼 수 있어요.</div>`);
+});
+document.addEventListener("toggle", e => { if (e.target.id === "howto") ls.set("howto-open", e.target.open); }, true);
+let imgCb = null;
+const imgIn = document.createElement("input"); imgIn.type = "file"; imgIn.accept = "image/*"; imgIn.hidden = true; document.body.appendChild(imgIn);
+imgIn.onchange = () => { const f = imgIn.files[0]; imgIn.value = ""; if (f && imgCb) imgCb(f); };
+function pickImage(cb){ imgCb = cb; imgIn.click(); }
+function shrinkImage(f, max = 1600){
+  return new Promise((res, rej) => { const url = URL.createObjectURL(f); const im = new Image();
+    im.onload = () => { const k = Math.min(1, max / Math.max(im.width, im.height)); const c = document.createElement("canvas"); c.width = Math.round(im.width * k); c.height = Math.round(im.height * k);
+      const g = c.getContext("2d"); g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height); g.drawImage(im, 0, 0, c.width, c.height); URL.revokeObjectURL(url); res(c.toDataURL("image/jpeg", 0.82)); };
+    im.onerror = () => { URL.revokeObjectURL(url); rej(); }; im.src = url; });
+}
 
 /* ===== 모달 ===== */
 function openModal(html){ closeModal(); const d = document.createElement("div"); d.className = "modal"; d.id = "modal"; d.innerHTML = `<div class="sheet">${html}</div>`;
