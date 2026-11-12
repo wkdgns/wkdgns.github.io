@@ -66,6 +66,8 @@ main{max-width:900px;margin:0 auto;padding:12px 16px 90px}
 .btn.pf2.pass.on{background:var(--ok-bg);color:var(--ok);border-color:var(--ok)}
 .btn.pf2.fail.on{background:var(--bad-bg);color:var(--bad);border-color:var(--bad)}
 .ckmemo{margin-top:6px}
+.msrow{border-top:1px solid var(--line);margin-top:8px;padding-top:2px}
+.msin{width:120px;flex:0 0 120px;text-align:right}.msu{min-width:28px}
 .ckfoot{position:sticky;bottom:0;display:flex;gap:8px;padding:10px 0 calc(10px + env(safe-area-inset-bottom));background:var(--bg)}
 .tw{overflow-x:auto;margin-top:6px}
 table.tq td,table.tq th{white-space:nowrap}
@@ -307,7 +309,7 @@ function whyText(it, r){
 }
 
 /* ===== 상태 ===== */
-const S = { items: [], records: [], tab: "measure", cur: null, inp: {}, recFilter: {}, itemFilter: "", itemGroup: "", measGroup: "", measQ: "", ckGroup: "", ckFilter: "", refs: [] };
+const S = { items: [], records: [], tab: "measure", cur: null, inp: {}, recFilter: {}, itemFilter: "", itemGroup: "", measGroup: "", measQ: "", msFilter: "", ckGroup: "", ckFilter: "", refs: [] };
 async function loadAll(){ S.items = await DB.all("items"); S.records = await DB.all("records"); S.items.sort(byItem); const rm = (await DB.all("meta")).find(x => x.k === "refs"); S.refs = rm && Array.isArray(rm.v) ? rm.v : []; }
 const byItem = (a, b) => (a.group || "").localeCompare(b.group || "", "ko") || (a.name || "").localeCompare(b.name || "", "ko");
 const itemById = id => S.items.find(i => i.id === id);
@@ -333,7 +335,10 @@ function renderMeasure(){
     $("#goItems").onclick = () => setTab("items"); $("#addEx").onclick = addExamples; return;
   }
   if (S.cur && itemById(S.cur)) return renderMeasureForm();
-  const gs = groups(); const q = S.measQ.trim().toLowerCase();
+  const q = S.measQ.trim().toLowerCase();
+  if (!q && S.measGroup && msItems(S.measGroup).length) return renderMeasSheet();
+  if (!q) return renderMeasDevices();
+  const gs = groups();
   const list = S.items.filter(i => (!S.measGroup || (i.group || "기타") === S.measGroup) && (!q || (i.name + " " + (i.group || "") + " " + (i.points || []).join(" ")).toLowerCase().includes(q)));
   const recent = ls.get("meas-recent", []).map(itemById).filter(Boolean).slice(0, 6);
   m.innerHTML = `
@@ -346,6 +351,110 @@ function renderMeasure(){
   const mq = $("#mq"); mq.oninput = () => { S.measQ = mq.value; const pos = mq.selectionStart; renderMeasure(); const n = $("#mq"); n.focus(); n.setSelectionRange(pos, pos); };
   m.querySelectorAll("[data-g]").forEach(b => b.onclick = () => { S.measGroup = b.dataset.g; renderMeasure(); });
   m.querySelectorAll("[data-pick]").forEach(b => b.onclick = () => pickItem(b.dataset.pick));
+}
+/* 장치별 측정표 */
+const msItems = g => S.items.filter(i => !isCheck(i) && (i.group || "기타") === g).sort((a, b) => pnum(a) - pnum(b) || a.name.localeCompare(b.name, "ko"));
+function msDraft(g){ const all = ls.get("ms-draft", {}); const d = all[g] || {}; return {car: d.car ?? ls.get("meas-car", ""), date: d.date || today(), inp: d.inp || {}, memo: d.memo || {}, lead: d.lead || {}}; }
+function msSave(g, d){ const all = ls.get("ms-draft", {}); all[g] = d; ls.set("ms-draft", all); }
+const msInp = (it, inp, d) => it.method === "contact" && d && d.lead && has(num(d.lead[it.id])) ? {...inp, lead: d.lead[it.id]} : inp;
+const msFilled = (it, inp, d) => !!(inp && evaluate(it, msInp(it, inp, d)));
+function renderMeasDevices(){
+  const m = $("#main");
+  const gs = [...new Set(S.items.filter(i => !isCheck(i)).map(i => i.group || "기타"))].sort((a, b) => a.localeCompare(b, "ko"));
+  const drafts = ls.get("ms-draft", {});
+  const recent = ls.get("meas-recent", []).map(itemById).filter(Boolean).slice(0, 6);
+  m.innerHTML = `<input class="t" id="mq" placeholder="항목 하나만 찾아서 측정 (예: 절연, 접촉기)" value="">
+    ${recent.length ? `<div class="muted" style="margin-top:12px">최근에 쓴 항목</div><div class="chips">${recent.map(i => `<button class="chip" data-pick="${i.id}">${esc(i.name)}</button>`).join("")}</div>` : ""}
+    <div class="muted" style="margin:12px 0 8px">장치를 고르면 측정 항목이 표로 나와요. 값을 넣으면 바로 판정하고, 측정 방법은 각 항목의 <b>📋 측정방법</b>을 누르면 볼 수 있어요.</div>` +
+    (gs.map(g => {
+      const its = msItems(g), rows = its.flatMap(ckRows), d = drafts[g];
+      const done = d && d.inp ? rows.filter(r => msFilled(r.it, d.inp[r.k], d)).length : 0;
+      const last = S.records.filter(r => r.kind !== "check" && (r.group || "기타") === g).map(r => r.date).sort().at(-1);
+      return `<div class="card click" data-msg="${esc(g)}"><div class="row"><span class="it-name grow">${esc(g)}</span><span class="muted">${its.length}개 항목</span></div>
+        <div class="std">${done ? `작성 중 ${done} / ${rows.length}` : `측정 칸 ${rows.length}개`}${last ? ` · 마지막 저장 ${esc(last)}` : ""}</div></div>`; }).join("") || `<div class="empty">숫자로 재는 항목이 없어요.</div>`);
+  const mq = $("#mq"); mq.oninput = () => { S.measQ = mq.value; renderMeasure(); const n = $("#mq"); n.focus(); n.setSelectionRange(n.value.length, n.value.length); };
+  m.querySelectorAll("[data-pick]").forEach(b => b.onclick = () => pickItem(b.dataset.pick));
+  m.querySelectorAll("[data-msg]").forEach(b => b.onclick = () => { S.measGroup = b.dataset.msg; S.msFilter = ""; renderMeasure(); window.scrollTo(0, 0); });
+}
+function rShort(it, r){
+  if (!r) return "";
+  const icon = {ok: "✔ ", cau: "⚠ ", bad: "✖ ", none: ""}[r.verdict];
+  const v = r.value === Infinity ? "∞" : `${it.method === "deviation" && r.value >= 0 ? "+" : ""}${fmt(r.value, ["vdrop", "imbalance", "deviation"].includes(it.method) ? 2 : undefined)} ${r.unit || ""}`;
+  const conv = it.method === "ir_temp" || (it.method === "deviation" && has(it.params?.cuRef)) || ["formula", "vdrop", "imbalance", "contact"].includes(it.method);
+  return `<span class="tag ${r.verdict}">${icon}${esc(r.label)}</span>${conv ? ` <span class="muted">${esc(v.trim())}</span>` : ""}`;
+}
+const msSimple = it => it.method === "direct" || it.method === "contact" || (it.method === "deviation" && !has(it.params?.cuRef));
+const msKey = it => it.method === "contact" ? "r" : "x";
+function renderMeasSheet(){
+  const g = S.measGroup, m = $("#main"), d = msDraft(g), items = msItems(g), rows = items.flatMap(ckRows);
+  const cars = [...new Set(S.records.map(r => r.car).filter(Boolean))].slice(-30).reverse();
+  const ev = r => d.inp[r.k] ? evaluate(r.it, msInp(r.it, d.inp[r.k], d)) : null;
+  const res = new Map(rows.map(r => [r.k, ev(r)]));
+  const nDone = [...res.values()].filter(Boolean).length, nBad = [...res.values()].filter(x => x && (x.verdict === "bad" || x.verdict === "cau")).length;
+  const f = S.msFilter || "";
+  const show = it => { const rs = ckRows(it); return !f || (f === "left" ? rs.some(r => !res.get(r.k)) : rs.some(r => { const x = res.get(r.k); return x && (x.verdict === "bad" || x.verdict === "cau"); })); };
+  const prevTag = (it, p) => { const pr = prevRecord(it.id, d.car.trim(), p); return pr ? `<span class="muted" style="font-size:12px">지난번 ${esc(pr.date.slice(2).replace(/-/g, "."))} ${esc(recVal(pr))} <span class="tag ${pr.verdict}">${esc(pr.label)}</span></span>` : ""; };
+  let n = 0;
+  m.innerHTML = `
+    <div class="row"><button class="btn sm" id="msBack">← 장치 목록</button><span class="grow"></span><b>${esc(g)}</b></div>
+    <div class="grid2" style="margin-top:10px"><div><label class="f">차량 번호</label><input class="t" id="msCar" list="msCars" value="${esc(d.car)}" placeholder="예: 12편성 3호차"><datalist id="msCars">${cars.map(c => `<option value="${esc(c)}">`).join("")}</datalist></div>
+      <div><label class="f">측정 날짜</label><input class="t" type="date" id="msDate" value="${esc(d.date)}"></div></div>
+    <div class="card" style="margin-top:10px"><div class="row"><b class="grow" id="msProg">진행 ${nDone} / ${rows.length}</b><span id="msBad">${nBad ? `<span class="tag bad">이상·주의 ${nBad}</span>` : ""}</span></div>
+      <div class="bar"><i id="msBar" style="width:${rows.length ? nDone / rows.length * 100 : 0}%"></i></div></div>
+    <div class="chips"><button class="chip ${!f ? "on" : ""}" data-msf="">전체 ${items.length}</button><button class="chip ${f === "left" ? "on" : ""}" data-msf="left">남은 것</button><button class="chip ${f === "bad" ? "on" : ""}" data-msf="bad">이상·주의</button></div>
+    <div style="margin-top:8px">${items.filter(show).map(it => `<div class="card ck">
+      <div class="row"><span class="it-name grow">${esc(it.name)}</span>${it.reviewed ? "" : `<span class="tag rev">확인 전</span>`}</div>
+      <div class="crit">${esc(stdText(it))}${it.condition ? `<div class="muted" style="margin-top:2px">조건: ${esc(it.condition)}</div>` : ""}</div>
+      ${it.method === "contact" ? `<div class="ckrow"><span class="grow muted">리드선 저항 (선택, 빼고 판정)</span><input class="t msin" inputmode="decimal" data-lead="${esc(it.id)}" value="${esc(d.lead[it.id] ?? "")}" placeholder="0" autocomplete="off"><span class="muted msu">${esc(it.unit || "Ω")}</span></div>` : ""}
+      ${ckRows(it).map(r => { const i = n++; const inp = d.inp[r.k] || {}; const x = res.get(r.k);
+        const simple = msSimple(it);
+        return `<div class="msrow" data-msk="${esc(r.k)}">
+          ${simple ? `<div class="ckrow"><span class="grow ckp">${esc(r.p || "측정값")}</span><input class="t msin" inputmode="decimal" data-k="${msKey(it)}" id="s${i}x" value="${esc(inp[msKey(it)] ?? "")}" placeholder="${esc(it.method === "deviation" && has(it.params?.ref) ? "기준 " + fmt(+it.params.ref) : it.method === "contact" ? "끊기면 OL" : "값")}" autocomplete="off"><span class="muted msu">${esc(it.unit || "")}</span>${/Ω/.test(it.unit || "") || it.method === "contact" ? `<button class="btn" data-ol="${msKey(it)}" type="button">OL</button>` : ""}</div>`
+            : `${r.p ? `<div class="ckp" style="margin-top:8px">${esc(r.p)}</div>` : ""}<div class="msins">${inputFields(it, inp, "s" + i)}</div>`}
+          <div class="row msres" style="margin-top:4px"><span class="msv">${rShort(it, x)}</span><span class="grow"></span>${prevTag(it, r.p)}</div>
+          ${x && x.verdict !== "ok" && x.verdict !== "none" ? `<input class="t ckmemo" data-msm="${esc(r.k)}" value="${esc(d.memo[r.k] || "")}" placeholder="메모 (선택)">` : ""}
+        </div>`; }).join("")}
+      <div class="row" style="margin-top:8px"><button class="btn sm" data-msinfo="${esc(it.id)}">📋 측정방법${it.images?.length ? ` · 사진 ${it.images.length}` : ""}</button><span class="grow"></span>${it.source?.page ? `<span class="muted">${pageText(it.source.page)}</span>` : ""}</div>
+    </div>`).join("") || `<div class="empty">${f === "left" ? "남은 항목이 없어요." : "이상·주의 항목이 없어요."}</div>`}</div>
+    <div class="ckfoot"><button class="btn" id="msClear">비우기</button><button class="btn primary grow" id="msSaveBtn" ${nDone ? "" : "disabled"}>측정표 저장 (${nDone}개)</button></div>`;
+  const keep = () => { const y = window.scrollY; renderMeasSheet(); window.scrollTo(0, y); };
+  const counts = () => {
+    const vals = rows.map(r => ev(r)); const dn = vals.filter(Boolean).length, bd = vals.filter(x => x && (x.verdict === "bad" || x.verdict === "cau")).length;
+    $("#msProg").textContent = `진행 ${dn} / ${rows.length}`; $("#msBar").style.width = (rows.length ? dn / rows.length * 100 : 0) + "%";
+    $("#msBad").innerHTML = bd ? `<span class="tag bad">이상·주의 ${bd}</span>` : "";
+    const sb = $("#msSaveBtn"); sb.disabled = !dn; sb.textContent = `측정표 저장 (${dn}개)`;
+  };
+  m.querySelectorAll("[data-msk]").forEach(row => {
+    const k = row.dataset.msk, r = rows.find(x => x.k === k); const inp = d.inp[k] || (d.inp[k] = {});
+    bindInputs(row, inp, () => {
+      const x = evaluate(r.it, msInp(r.it, inp, d)); $(".msv", row).innerHTML = rShort(r.it, x);
+      const needMemo = x && x.verdict !== "ok" && x.verdict !== "none", hasMemo = !!$("[data-msm]", row);
+      msSave(g, d); counts();
+      if (needMemo !== hasMemo){ if (needMemo){ const el = document.createElement("input"); el.className = "t ckmemo"; el.dataset.msm = k; el.placeholder = "메모 (선택)"; el.value = d.memo[k] || ""; el.oninput = () => { d.memo[k] = el.value; msSave(g, d); }; row.appendChild(el); } else $("[data-msm]", row).remove(); }
+    });
+  });
+  m.querySelectorAll("[data-lead]").forEach(el => el.onchange = () => { d.lead[el.dataset.lead] = el.value; msSave(g, d); keep(); });
+  $("#msBack").onclick = () => { S.measGroup = ""; renderMeasure(); window.scrollTo(0, 0); };
+  $("#msCar").oninput = e => { d.car = e.target.value; msSave(g, d); };
+  $("#msCar").onchange = keep;
+  $("#msDate").onchange = e => { d.date = e.target.value; msSave(g, d); };
+  m.querySelectorAll("[data-msf]").forEach(b => b.onclick = () => { S.msFilter = b.dataset.msf; renderMeasSheet(); });
+  m.querySelectorAll("[data-msm]").forEach(el => el.oninput = () => { d.memo[el.dataset.msm] = el.value; msSave(g, d); });
+  m.querySelectorAll("[data-msinfo]").forEach(b => b.onclick = () => ckInfo(itemById(b.dataset.msinfo)));
+  $("#msClear").onclick = () => { const dn = rows.filter(r => ev(r)).length; if (dn && !confirm("이 장치에 넣은 값을 모두 비울까요?")) return; d.inp = {}; d.memo = {}; msSave(g, d); renderMeasSheet(); };
+  $("#msSaveBtn").onclick = async () => {
+    const car = d.car.trim(); if (!car && !confirm("차량 번호 없이 저장할까요?")) return;
+    const ts = new Date().toISOString(); const recs = [];
+    rows.forEach(r => { const inp = d.inp[r.k] && msInp(r.it, d.inp[r.k], d); const x = inp && evaluate(r.it, inp); if (!x) return;
+      recs.push({id: uid(), itemId: r.it.id, itemName: r.it.name, group: r.it.group || "", car, point: r.p, date: d.date || today(), ts, inputs: JSON.parse(JSON.stringify(inp)),
+        value: x.value, unit: x.unit, verdict: x.verdict, label: x.label, detail: x.detail || "", std: stdText(r.it), reviewedStd: !!r.it.reviewed, memo: (d.memo[r.k] || "").trim()}); });
+    if (!recs.length) return toast("넣은 값이 없어요");
+    await DB.putMany("records", recs); S.records.push(...recs); if (car) ls.set("meas-car", car);
+    const nb = recs.filter(x => x.verdict === "bad").length, nc = recs.filter(x => x.verdict === "cau").length;
+    d.inp = {}; d.memo = {}; msSave(g, d);
+    toast(`${recs.length}개 저장했어요${nb ? ` · 이상 ${nb}개` : ""}${nc ? ` · 주의 ${nc}개` : ""}`);
+    renderMeasSheet(); window.scrollTo(0, 0);
+  };
 }
 function pickItem(id){
   S.cur = id; const it = itemById(id);
@@ -521,13 +630,14 @@ function renderCheckForm(){
 function ckInfo(it){
   if (!it) return;
   openModal(`<div class="sheet-head"><h2>${esc(it.name)}</h2><button class="btn sm" data-close>닫기</button></div>
-    ${critText(it) ? `<label class="f">판정 기준</label><div class="crit">${esc(critText(it))}</div>` : ""}
+    ${critText(it) ? `<label class="f">판정 기준</label><div class="crit">${esc(critText(it))}</div>` : isCheck(it) ? "" : `<label class="f">판정 기준</label><div class="crit">${esc(stdText(it))}</div>`}
     ${it.condition ? `<div class="std" style="margin-top:6px">조건: ${esc(it.condition)}</div>` : ""}
     ${it.note ? `<div class="hint">${esc(it.note)}</div>` : ""}
-    <div style="margin-top:8px">${howtoHTML(it)}</div>
+    <div style="margin-top:8px">${howtoHTML(it, true)}</div>
     ${it.source?.quote ? `<label class="f">매뉴얼 원문 ${it.source.doc ? "(" + esc(it.source.doc) + (it.source.page ? " " + pageText(it.source.page) : "") + ")" : ""}</label><div class="quote">${esc(it.source.quote)}</div>` : ""}
-    <div class="row" style="margin-top:12px"><span class="grow"></span><button class="btn sm" id="ckEdit">기준값 보기·고치기</button></div>`);
+    <div class="row" style="margin-top:12px">${isCheck(it) ? "" : `<button class="btn sm" id="ckOne">이 항목만 따로 측정</button>`}<span class="grow"></span><button class="btn sm" id="ckEdit">기준값 보기·고치기</button></div>`);
   $("#ckEdit").onclick = () => editItem(it);
+  if ($("#ckOne")) $("#ckOne").onclick = () => { closeModal(); S.tab = "measure"; document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === "measure")); pickItem(it.id); };
 }
 function openViewer(src, cap){
   const old = $("#modal2"); if (old) old.remove();
@@ -980,9 +1090,8 @@ async function addExamples(){ await DB.putMany("items", EXAMPLES.map(normItem));
 /* ===== 측정법·사진 ===== */
 const pageText = pg => esc(/^\d+$/.test(String(pg)) ? pg + "쪽" : pg);
 const hasHowto = it => !!(it.where || (it.howto && it.howto.length) || (it.images && it.images.length));
-function howtoHTML(it){
+function howtoHTML(it, open = false){
   if (!hasHowto(it)) return "";
-  const open = ls.get("howto-open", true);
   return `<details class="card howto" ${open ? "open" : ""} id="howto" data-iid="${esc(it.id)}"><summary>📋 측정법·측정 부위${it.images?.length ? ` · 사진 ${it.images.length}장` : ""}</summary>
     ${it.where ? `<div style="margin-top:6px"><b>측정 부위</b><div style="white-space:pre-wrap;line-height:1.6">${esc(it.where)}</div></div>` : ""}
     ${it.howto?.length ? `<div style="margin-top:8px"><b>측정 순서</b><ol>${it.howto.map(h => `<li>${esc(h)}</li>`).join("")}</ol></div>` : ""}
@@ -996,7 +1105,7 @@ document.addEventListener("click", e => {
   const box = f.closest("[data-iid]"); const it = itemById(box ? box.dataset.iid : S.cur); const im = it && it.images[+f.dataset.img]; if (!im) return;
   openViewer(im.src, im.caption || it.name);
 });
-document.addEventListener("toggle", e => { if (e.target.id === "howto") ls.set("howto-open", e.target.open); }, true);
+
 let imgCb = null;
 const imgIn = document.createElement("input"); imgIn.type = "file"; imgIn.accept = "image/*"; imgIn.hidden = true; document.body.appendChild(imgIn);
 imgIn.onchange = () => { const f = imgIn.files[0]; imgIn.value = ""; if (f && imgCb) imgCb(f); };
