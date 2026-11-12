@@ -58,6 +58,18 @@ main{max-width:900px;margin:0 auto;padding:12px 16px 90px}
 .empty{text-align:center;color:var(--sub);padding:36px 10px;line-height:1.7}
 .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .grow{flex:1;min-width:0}
+.bar{height:8px;background:var(--line);border-radius:4px;margin-top:8px;overflow:hidden}.bar i{display:block;height:100%;background:var(--ok)}
+.ck .crit{font-size:14px;padding:8px 10px}
+.ckrow{display:flex;align-items:center;gap:6px;margin-top:8px;flex-wrap:wrap}
+.ckp{font-weight:600}
+.btn.pf2{padding:9px 12px}
+.btn.pf2.pass.on{background:var(--ok-bg);color:var(--ok);border-color:var(--ok)}
+.btn.pf2.fail.on{background:var(--bad-bg);color:var(--bad);border-color:var(--bad)}
+.ckmemo{margin-top:6px}
+.ckfoot{position:sticky;bottom:0;display:flex;gap:8px;padding:10px 0 calc(10px + env(safe-area-inset-bottom));background:var(--bg)}
+.tw{overflow-x:auto;margin-top:6px}
+table.tq td,table.tq th{white-space:nowrap}
+#modal2{z-index:25}
 label.f{display:block;font-size:14px;color:var(--sub);margin:12px 0 4px}
 input.t,textarea.t,select.t{width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg);font-size:17px}
 textarea.t{font-size:15px;min-height:70px}
@@ -113,6 +125,7 @@ details summary{cursor:pointer;color:var(--accent);font-weight:600;padding:6px 0
   <div class="top"><h1>⚡ 측정값 판정</h1><span class="muted" id="offline"></span></div>
   <nav class="tabs" id="tabs">
     <button data-tab="measure" class="on">측정</button>
+    <button data-tab="check">점검표</button>
     <button data-tab="records">기록</button>
     <button data-tab="calc">계산기</button>
     <button data-tab="items">기준값</button>
@@ -294,8 +307,8 @@ function whyText(it, r){
 }
 
 /* ===== 상태 ===== */
-const S = { items: [], records: [], tab: "measure", cur: null, inp: {}, recFilter: {}, itemFilter: "", itemGroup: "", measGroup: "", measQ: "" };
-async function loadAll(){ S.items = await DB.all("items"); S.records = await DB.all("records"); S.items.sort(byItem); }
+const S = { items: [], records: [], tab: "measure", cur: null, inp: {}, recFilter: {}, itemFilter: "", itemGroup: "", measGroup: "", measQ: "", ckGroup: "", ckFilter: "", refs: [] };
+async function loadAll(){ S.items = await DB.all("items"); S.records = await DB.all("records"); S.items.sort(byItem); const rm = (await DB.all("meta")).find(x => x.k === "refs"); S.refs = rm && Array.isArray(rm.v) ? rm.v : []; }
 const byItem = (a, b) => (a.group || "").localeCompare(b.group || "", "ko") || (a.name || "").localeCompare(b.name || "", "ko");
 const itemById = id => S.items.find(i => i.id === id);
 const groups = () => [...new Set(S.items.map(i => i.group || "기타"))].sort((a, b) => a.localeCompare(b, "ko"));
@@ -306,7 +319,7 @@ document.getElementById("tabs").addEventListener("click", e => { const b = e.tar
 function render(){
   const n = unreviewed(); const tb = document.querySelector('#tabs [data-tab="items"]');
   tb.innerHTML = "기준값" + (n ? `<span class="dot">${n}</span>` : "");
-  ({measure: renderMeasure, records: renderRecords, calc: renderCalc, items: renderItems})[S.tab]();
+  ({measure: renderMeasure, check: renderCheck, records: renderRecords, calc: renderCalc, items: renderItems})[S.tab]();
 }
 
 /* ===== 측정 탭 ===== */
@@ -440,6 +453,90 @@ function renderMeasureForm(){
 // IndexedDB 는 Infinity 를 그대로 저장하므로 별도 변환 없음. JSON 내보낼 때만 "OL" 로 바꾼다.
 const serRec = r => r;
 
+/* ===== 점검표 탭 (합격/불합격 항목을 장치별로) ===== */
+const pnum = it => { const m = String(it.source?.page || "").match(/P\s*(\d+)/); return m ? +m[1] : 9999; };
+const ckItems = g => S.items.filter(i => isCheck(i) && (i.group || "기타") === g).sort((a, b) => pnum(a) - pnum(b) || a.name.localeCompare(b.name, "ko"));
+const ckRows = it => (it.points && it.points.length ? it.points : [""]).map(p => ({it, p, k: it.id + "|" + p}));
+function ckDraft(g){ const all = ls.get("ck-draft", {}); const d = all[g] || {}; return {car: d.car ?? ls.get("meas-car", ""), date: d.date || today(), ans: d.ans || {}, memo: d.memo || {}}; }
+function ckSave(g, d){ const all = ls.get("ck-draft", {}); all[g] = d; ls.set("ck-draft", all); }
+function renderCheck(){
+  const m = $("#main");
+  const gs = [...new Set(S.items.filter(isCheck).map(i => i.group || "기타"))].sort((a, b) => a.localeCompare(b, "ko"));
+  if (!gs.length){ m.innerHTML = `<div class="empty">합격/불합격 항목이 아직 없어요.<br><br><b>기준값</b> 탭에서 기준값 파일을 불러오면<br>장치별 점검표가 생겨요.</div>`; return; }
+  if (S.ckGroup && gs.includes(S.ckGroup)) return renderCheckForm();
+  const drafts = ls.get("ck-draft", {});
+  m.innerHTML = `<div class="muted" style="margin-bottom:8px">장치를 고르면 숫자 없는 점검 항목이 체크리스트로 나와요. 고른 것은 저장 전까지 이 기기에 임시로 남아 있어요.</div>` + gs.map(g => {
+    const rows = ckItems(g).flatMap(ckRows); const d = drafts[g]; const done = d && d.ans ? rows.filter(r => d.ans[r.k]).length : 0;
+    const last = S.records.filter(r => r.kind === "check" && (r.group || "기타") === g).map(r => r.date).sort().at(-1);
+    return `<div class="card click" data-ckg="${esc(g)}"><div class="row"><span class="it-name grow">${esc(g)}</span><span class="muted">${ckItems(g).length}개 항목</span></div>
+      <div class="std">${done ? `작성 중 ${done} / ${rows.length}` : `점검 칸 ${rows.length}개`}${last ? ` · 마지막 저장 ${esc(last)}` : ""}</div></div>`; }).join("");
+  m.querySelectorAll("[data-ckg]").forEach(b => b.onclick = () => { S.ckGroup = b.dataset.ckg; S.ckFilter = ""; renderCheck(); window.scrollTo(0, 0); });
+}
+function renderCheckForm(){
+  const g = S.ckGroup, m = $("#main"), d = ckDraft(g), items = ckItems(g), rows = items.flatMap(ckRows);
+  const cars = [...new Set(S.records.map(r => r.car).filter(Boolean))].slice(-30).reverse();
+  const nDone = rows.filter(r => d.ans[r.k]).length, nFail = rows.filter(r => d.ans[r.k] === "fail").length;
+  const f = S.ckFilter;
+  const show = it => { const rs = ckRows(it); return !f || (f === "left" ? rs.some(r => !d.ans[r.k]) : rs.some(r => d.ans[r.k] === "fail")); };
+  const prevTag = (it, p) => { const pr = prevRecord(it.id, d.car.trim(), p); return pr ? `<span class="tag ${pr.verdict}">지난번 ${esc(pr.date.slice(2).replace(/-/g, "."))} ${esc(pr.label)}</span>` : ""; };
+  m.innerHTML = `
+    <div class="row"><button class="btn sm" id="ckBack">← 장치 목록</button><span class="grow"></span><b>${esc(g)}</b></div>
+    <div class="grid2" style="margin-top:10px"><div><label class="f">차량 번호</label><input class="t" id="ckCar" list="ckCars" value="${esc(d.car)}" placeholder="예: 12편성 3호차"><datalist id="ckCars">${cars.map(c => `<option value="${esc(c)}">`).join("")}</datalist></div>
+      <div><label class="f">점검 날짜</label><input class="t" type="date" id="ckDate" value="${esc(d.date)}"></div></div>
+    <div class="card" style="margin-top:10px"><div class="row"><b class="grow">진행 ${nDone} / ${rows.length}</b>${nFail ? `<span class="tag bad">불합격 ${nFail}</span>` : ""}</div>
+      <div class="bar"><i style="width:${rows.length ? nDone / rows.length * 100 : 0}%"></i></div></div>
+    <div class="chips"><button class="chip ${!f ? "on" : ""}" data-ckf="">전체 ${items.length}</button><button class="chip ${f === "left" ? "on" : ""}" data-ckf="left">남은 것 ${rows.length - nDone}</button><button class="chip ${f === "fail" ? "on" : ""}" data-ckf="fail">불합격 ${nFail}</button></div>
+    <div style="margin-top:8px">${items.filter(show).map(it => `<div class="card ck">
+      <div class="row"><span class="it-name grow">${esc(it.name)}</span>${it.reviewed ? "" : `<span class="tag rev">확인 전</span>`}</div>
+      ${critText(it) ? `<div class="crit">${esc(critText(it))}</div>` : ""}
+      ${ckRows(it).map(r => `<div class="ckrow">${r.p ? `<span class="grow ckp">${esc(r.p)}</span>` : `<span class="grow"></span>`}${prevTag(it, r.p)}
+        <button class="btn pf2 pass ${d.ans[r.k] === "pass" ? "on" : ""}" data-ck="${esc(r.k)}" data-v="pass">✔ 합격</button><button class="btn pf2 fail ${d.ans[r.k] === "fail" ? "on" : ""}" data-ck="${esc(r.k)}" data-v="fail">✖ 불합격</button></div>
+        ${d.ans[r.k] === "fail" ? `<input class="t ckmemo" data-ckm="${esc(r.k)}" value="${esc(d.memo[r.k] || "")}" placeholder="불합격 내용 (선택)">` : ""}`).join("")}
+      <div class="row" style="margin-top:6px"><button class="btn sm" data-ckinfo="${esc(it.id)}">📋 자세히${it.images?.length ? ` · 사진 ${it.images.length}` : ""}</button><span class="grow"></span>${it.source?.page ? `<span class="muted">${pageText(it.source.page)}</span>` : ""}</div>
+    </div>`).join("") || `<div class="empty">${f === "left" ? "남은 항목이 없어요." : "불합격 항목이 없어요."}</div>`}</div>
+    <div class="ckfoot"><button class="btn" id="ckClear">비우기</button><button class="btn primary grow" id="ckSaveBtn" ${nDone ? "" : "disabled"}>점검표 저장 (${nDone}개)</button></div>`;
+  const keep = fn => { const y = window.scrollY; fn(); renderCheckForm(); window.scrollTo(0, y); };
+  $("#ckBack").onclick = () => { S.ckGroup = ""; renderCheck(); window.scrollTo(0, 0); };
+  $("#ckCar").oninput = e => { d.car = e.target.value; ckSave(g, d); };
+  $("#ckCar").onchange = () => keep(() => {});
+  $("#ckDate").onchange = e => { d.date = e.target.value; ckSave(g, d); };
+  m.querySelectorAll("[data-ckf]").forEach(b => b.onclick = () => { S.ckFilter = b.dataset.ckf; renderCheckForm(); });
+  m.querySelectorAll("[data-ck]").forEach(b => b.onclick = () => keep(() => { const k = b.dataset.ck; if (d.ans[k] === b.dataset.v) delete d.ans[k]; else d.ans[k] = b.dataset.v; ckSave(g, d); }));
+  m.querySelectorAll("[data-ckm]").forEach(el => el.oninput = () => { d.memo[el.dataset.ckm] = el.value; ckSave(g, d); });
+  m.querySelectorAll("[data-ckinfo]").forEach(b => b.onclick = () => ckInfo(itemById(b.dataset.ckinfo)));
+  $("#ckClear").onclick = () => { if (nDone && !confirm("이 장치에서 고른 합격·불합격을 모두 비울까요?")) return; d.ans = {}; d.memo = {}; ckSave(g, d); renderCheckForm(); };
+  $("#ckSaveBtn").onclick = async () => {
+    const car = d.car.trim(); if (!car && !confirm("차량 번호 없이 저장할까요?")) return;
+    const ts = new Date().toISOString(); const recs = [];
+    rows.forEach(r => { const v = d.ans[r.k]; if (!v) return; const ok = v === "pass";
+      recs.push({id: uid(), itemId: r.it.id, itemName: r.it.name, group: r.it.group || "", car, point: r.p, date: d.date || today(), ts, inputs: {pf: v}, value: ok ? 1 : 0, unit: "",
+        verdict: ok ? "ok" : "bad", label: ok ? "합격" : "불합격", detail: "", std: stdText(r.it), reviewedStd: !!r.it.reviewed, memo: (d.memo[r.k] || "").trim(), kind: "check"}); });
+    await DB.putMany("records", recs); S.records.push(...recs); if (car) ls.set("meas-car", car);
+    const nf = recs.filter(x => x.verdict === "bad").length, left = rows.length - recs.length;
+    d.ans = {}; d.memo = {}; ckSave(g, d);
+    toast(`${recs.length}개 저장했어요${nf ? ` · 불합격 ${nf}개` : ""}${left ? ` · 안 고른 ${left}개는 저장 안 함` : ""}`);
+    renderCheckForm(); window.scrollTo(0, 0);
+  };
+}
+function ckInfo(it){
+  if (!it) return;
+  openModal(`<div class="sheet-head"><h2>${esc(it.name)}</h2><button class="btn sm" data-close>닫기</button></div>
+    ${critText(it) ? `<label class="f">판정 기준</label><div class="crit">${esc(critText(it))}</div>` : ""}
+    ${it.condition ? `<div class="std" style="margin-top:6px">조건: ${esc(it.condition)}</div>` : ""}
+    ${it.note ? `<div class="hint">${esc(it.note)}</div>` : ""}
+    <div style="margin-top:8px">${howtoHTML(it)}</div>
+    ${it.source?.quote ? `<label class="f">매뉴얼 원문 ${it.source.doc ? "(" + esc(it.source.doc) + (it.source.page ? " " + pageText(it.source.page) : "") + ")" : ""}</label><div class="quote">${esc(it.source.quote)}</div>` : ""}
+    <div class="row" style="margin-top:12px"><span class="grow"></span><button class="btn sm" id="ckEdit">기준값 보기·고치기</button></div>`);
+  $("#ckEdit").onclick = () => editItem(it);
+}
+function openViewer(src, cap){
+  const old = $("#modal2"); if (old) old.remove();
+  const d = document.createElement("div"); d.className = "modal"; d.id = "modal2";
+  d.innerHTML = `<div class="sheet"><div class="sheet-head"><h2>${esc(cap || "사진")}</h2><button class="btn sm" data-close2>닫기</button></div><div class="viewer"><img src="${esc(src)}" alt=""></div><div class="hint">두 손가락으로 벌려서 크게 볼 수 있어요.</div></div>`;
+  d.addEventListener("click", e => { if (e.target === d || e.target.closest("[data-close2]")) { d.remove(); if (!$("#modal")) document.body.style.overflow = ""; } });
+  document.body.appendChild(d); document.body.style.overflow = "hidden";
+}
+
 /* ===== 기록 탭 ===== */
 function renderRecords(){
   const m = $("#main"); const f = S.recFilter;
@@ -535,12 +632,12 @@ const RHO = {cu: {name: "구리", rho: 0.017241, a: 0.00393}, al: {name: "알루
 const C = ls.get("calc", {});
 function renderCalc(){
   const m = $("#main");
-  const tools = [["ir", "절연저항 온도 보정"], ["open", "단선·접촉불량 판정"], ["vd", "전압강하"], ["ohm", "옴의 법칙"]];
+  const tools = [["ir", "절연저항 온도 보정"], ["open", "단선·접촉불량 판정"], ["vd", "전압강하"], ["ohm", "옴의 법칙"], ["tq", "🔩 조임 토크표"]];
   const t = C.tool || "ir";
   m.innerHTML = `<div class="chips">${tools.map(([k, n]) => `<button class="chip ${t === k ? "on" : ""}" data-tool="${k}">${n}</button>`).join("")}</div><div id="tool" style="margin-top:12px"></div>
     <div class="hint" style="margin-top:14px">계산기는 일반 공식이에요. 판정 기준(허용 %, 배수 등)은 매뉴얼 값으로 바꿔 쓰세요. 넣은 값은 이 기기에만 남습니다.</div>`;
   m.querySelectorAll("[data-tool]").forEach(b => b.onclick = () => { C.tool = b.dataset.tool; ls.set("calc", C); renderCalc(); });
-  ({ir: toolIR, open: toolOpen, vd: toolVD, ohm: toolOhm})[t]($("#tool"));
+  ({ir: toolIR, open: toolOpen, vd: toolVD, ohm: toolOhm, tq: toolTorque})[t]($("#tool"));
 }
 function field(id, label, ph, extra){ return `<div><label class="f">${label}</label><div class="inrow"><input class="t" inputmode="decimal" id="${id}" placeholder="${esc(ph || "")}" value="${esc(C[id] ?? "")}" autocomplete="off">${extra || ""}</div></div>`; }
 function bindCalc(root, fn){ root.querySelectorAll("input,select").forEach(el => { const h = () => { C[el.id] = el.value; ls.set("calc", C); fn(); }; el.oninput = h; el.onchange = h; }); root.querySelectorAll("[data-olc]").forEach(b => b.onclick = () => { const el = $("#" + b.dataset.olc); el.value = "OL"; C[el.id] = "OL"; ls.set("calc", C); fn(); }); fn(); }
@@ -610,6 +707,30 @@ function toolVD(el){
     const vv = !Number.isFinite(lim) ? "none" : pct > lim ? "bad" : (Number.isFinite(cau) && pct > cau) ? "cau" : "ok";
     $("#out").innerHTML = vbox(vv, vv === "none" ? `강하율 ${fmt(pct, 2)}%` : {ok: "✔ 정상", cau: "⚠ 주의", bad: "✖ 이상"}[vv], `강하 ${fmt(drop, 2)} V · ${fmt(pct, 2)}%`, `${mode === "calc" ? `부하 쪽 예상 ${fmt(base - drop, 1)} V · ` : ""}${Number.isFinite(lim) ? `허용 ${fmt(lim)}% 이하` : "허용 강하율을 넣으면 판정합니다"}`);
   });
+}
+function toolTorque(el){
+  const refs = S.refs.filter(r => r.kind === "torque");
+  if (!refs.length){ el.innerHTML = `<div class="card"><h3 style="margin-top:0">조임 토크표</h3><div class="muted">기준값 파일에 토크표가 들어 있으면 여기에 장치별로 보여요. 기준값 탭에서 파일을 불러와 주세요.</div></div>`; return; }
+  const gs = [...new Set(refs.map(r => r.group))]; const g = gs.includes(C.tq_g) ? C.tq_g : gs[0];
+  el.innerHTML = `<input class="t" id="tqq" placeholder="찾기 (예: M8, 접지, 아크슈트) — 모든 장치에서 찾아요" value="${esc(C.tq_q || "")}">
+    <div class="chips" id="tqg" style="margin-top:8px">${gs.map(x => `<button class="chip ${x === g ? "on" : ""}" data-tg="${esc(x)}">${esc(x)}</button>`).join("")}</div><div id="tqOut"></div>`;
+  const draw = () => {
+    const q = (C.tq_q || "").trim().toLowerCase(); $("#tqg").style.display = q ? "none" : "";
+    const hit = c => String(c).toLowerCase().includes(q);
+    const list = refs.filter(r => q ? true : r.group === g).map(r => {
+      if (!q || hit(r.title) || hit(r.group)) return [r, r.rows];
+      return [r, r.rows.filter(row => row.some(hit))]; }).filter(([r, rows]) => !q || rows.length);
+    $("#tqOut").innerHTML = list.map(([r, rows]) => `<div class="card" style="margin-top:10px">
+      <b>${q ? esc(r.group) + " · " : ""}${esc(r.title)}</b>
+      ${r.source?.page ? `<div class="muted">📖 ${esc(r.source.doc || "")} ${pageText(r.source.page)}</div>` : ""}
+      ${rows.length ? `<div class="tw"><table class="rec tq"><tr>${r.cols.map(c => `<th>${esc(c)}</th>`).join("")}</tr>${rows.map(row => `<tr>${row.map((c, i) => `<td class="${i ? "num" : ""}">${esc(c)}</td>`).join("")}</tr>`).join("")}</table></div>` : ""}
+      ${r.note ? `<div class="hint">${esc(r.note)}</div>` : ""}
+      ${r.images?.length ? `<div class="howto"><div class="imgs">${r.images.map((im, i) => `<figure data-rimg="${i}" data-rid="${esc(r.id)}"><img src="${esc(im.src)}" alt="" loading="lazy"><figcaption>${esc(im.caption || "")}${im.page ? ` (${pageText(im.page)})` : ""}</figcaption></figure>`).join("")}</div></div>` : ""}
+    </div>`).join("") || `<div class="empty">찾는 값이 없어요.</div>`;
+  };
+  const qi = $("#tqq"); qi.oninput = () => { C.tq_q = qi.value; ls.set("calc", C); draw(); };
+  el.querySelectorAll("[data-tg]").forEach(b => b.onclick = () => { C.tq_g = b.dataset.tg; ls.set("calc", C); toolTorque(el); });
+  draw();
 }
 function toolOhm(el){
   el.innerHTML = `<div class="card"><h3 style="margin-top:0">옴의 법칙</h3><div class="hint">두 개만 넣으면 나머지를 구합니다.</div>
@@ -766,6 +887,13 @@ function normItem(x){
   const p = x.params || {}; ["refTemp", "halveEvery", "ref", "nominal", "cuRef"].forEach(k => { if (has(p[k])) it.params[k] = +p[k]; }); if (p.phases) it.params.phases = String(p.phases); if (p.inputs) it.params.inputs = String(p.inputs); if (p.expr) it.params.expr = String(p.expr); if (p.criteria) it.params.criteria = String(p.criteria);
   return it;
 }
+function normRef(x){
+  if (!x || !x.id || !Array.isArray(x.cols) || !Array.isArray(x.rows)) return null;
+  return {id: String(x.id), kind: String(x.kind || "ref"), group: String(x.group || "기타"), title: String(x.title || ""), cols: x.cols.map(String), rows: x.rows.filter(Array.isArray).map(r => r.map(c => String(c ?? ""))),
+    note: String(x.note || ""), source: {doc: String(x.source?.doc || ""), page: String(x.source?.page || "")},
+    images: (Array.isArray(x.images) ? x.images : []).map(im => ({src: imgPool[im.ref] || im.src, caption: String(im.caption || ""), page: im.page !== undefined ? String(im.page) : ""})).filter(im => typeof im.src === "string" && /^data:image\/(png|jpe?g|webp|gif);base64,/.test(im.src))};
+}
+async function saveRefs(arr, replace){ const m = new Map((replace ? [] : S.refs).map(r => [r.id, r])); arr.forEach(r => m.set(r.id, r)); S.refs = [...m.values()]; await DB.put("meta", {k: "refs", v: S.refs}); }
 const stdKey = a => JSON.stringify([a.name, a.group, a.method, a.unit, a.normal, a.caution, a.params, a.points, a.condition, a.where || "", a.howto || [], (a.images || []).map(im => (im.caption || "") + im.src.length + im.src.slice(-40))]);
 const sameStd = (a, b) => stdKey(a) === stdKey(b);
 let imgPool = {};
@@ -777,23 +905,24 @@ async function importFile(f){
   if (j.format && j.format !== "ktx-meas-standards") return toast("이 앱용 기준값 파일이 아니에요");
   if (!Array.isArray(arr)) return toast("항목(items)이 없는 파일이에요");
   const inc = arr.map(normItem).filter(i => i.name);
+  const refs = Array.isArray(j.refs) ? j.refs.map(normRef).filter(Boolean) : [];
   const add = [], chg = [], same = [];
   inc.forEach(i => { const o = itemById(i.id); if (!o) add.push(i); else if (sameStd(o, i)) same.push(i); else chg.push([o, i]); });
   openModal(`<div class="sheet-head"><h2>기준값 파일 불러오기</h2><button class="btn sm" data-close>닫기</button></div>
     <div class="muted">${esc(f.name)}${j.title ? " · " + esc(j.title) : ""}${j.created ? " · 만든 날 " + esc(j.created) : ""}</div>
     ${j.notes ? `<div class="quote">${esc(j.notes)}</div>` : ""}
-    <div class="card" style="margin-top:10px">새 항목 <b>${add.length}</b>개 · 값이 바뀐 항목 <b>${chg.length}</b>개 · 그대로 ${same.length}개</div>
+    <div class="card" style="margin-top:10px">새 항목 <b>${add.length}</b>개 · 값이 바뀐 항목 <b>${chg.length}</b>개 · 그대로 ${same.length}개${refs.length ? `<br>토크·참고표 <b>${refs.length}</b>개 (계산기 탭 → 조임 토크표)` : ""}</div>
     ${chg.length ? `<h3>바뀌는 항목</h3>${chg.map(([o, n]) => `<div class="card"><b>${esc(n.name)}</b><div class="std">지금: ${esc(stdText(o))}</div><div class="std">파일: ${esc(stdText(n))}</div></div>`).join("")}
       <label class="row" style="margin-top:6px"><input type="checkbox" id="ovr" checked> 바뀐 항목을 파일 값으로 바꾸기</label>` : ""}
     ${add.length ? `<details><summary>새 항목 목록 보기</summary>${add.map(n => `<div class="std">• ${esc(n.name)} — ${esc(stdText(n))}</div>`).join("")}</details>` : ""}
     <div class="hint" style="margin-top:8px">파일에서 들어온 항목은 '확인 전'으로 표시됩니다(파일에 확인함으로 적힌 것 제외). 기록은 건드리지 않아요.</div>
-    <div class="row" style="margin-top:14px"><span class="grow"></span><button class="btn primary" id="doImp" ${add.length + chg.length ? "" : "disabled"}>불러오기</button></div>`);
+    <div class="row" style="margin-top:14px"><span class="grow"></span><button class="btn primary" id="doImp" ${add.length + chg.length + refs.length ? "" : "disabled"}>불러오기</button></div>`);
   $("#doImp").onclick = async () => {
     const ovr = $("#ovr") ? $("#ovr").checked : false;
     const put = add.concat(ovr ? chg.map(([o, n]) => n) : []);
-    await DB.putMany("items", put); await loadAll();
+    await DB.putMany("items", put); if (refs.length) await saveRefs(refs); await loadAll();
     ls.set("std-meta", {name: f.name, title: j.title || "", date: today()});
-    closeModal(); toast(`${put.length}개 항목을 넣었어요`); S.itemGroup = unreviewed() ? "__rev" : ""; render();
+    closeModal(); toast(`${put.length}개 항목을 넣었어요${refs.length ? ` · 토크·참고표 ${refs.length}개` : ""}`); S.itemGroup = unreviewed() ? "__rev" : ""; render();
   };
 }
 async function importBackup(j, name){
@@ -805,16 +934,17 @@ async function importBackup(j, name){
   const go = async rep => {
     if (rep && !confirm("지금 있는 항목과 기록을 모두 지우고 백업으로 바꿀까요?")) return;
     if (rep){ await DB.clear("items"); await DB.clear("records"); }
-    await DB.putMany("items", items); await DB.putMany("records", recs); await loadAll(); closeModal(); toast("백업을 되살렸어요"); render();
+    imgPool = {}; const refs = Array.isArray(j.refs) ? j.refs.map(normRef).filter(Boolean) : [];
+    await DB.putMany("items", items); await DB.putMany("records", recs); if (refs.length || rep) await saveRefs(refs, rep); await loadAll(); closeModal(); toast("백업을 되살렸어요"); render();
   };
   $("#bkRep").onclick = () => go(true); $("#bkMerge").onclick = () => go(false);
 }
 function exportStd(){
-  const out = {format: "ktx-meas-standards", version: 1, title: "내 기준값", created: today(), items: S.items.map(i => ({...i}))};
+  const out = {format: "ktx-meas-standards", version: 1, title: "내 기준값", created: today(), items: S.items.map(i => ({...i})), refs: S.refs};
   download(`기준값_${today()}.json`, JSON.stringify(out, null, 2), "application/json");
 }
 function exportBackup(){
-  const out = {format: "ktx-meas-backup", version: 1, created: today(), items: S.items, records: S.records.map(r => ({...r, value: r.value === Infinity ? "OL" : r.value}))};
+  const out = {format: "ktx-meas-backup", version: 1, created: today(), items: S.items, refs: S.refs, records: S.records.map(r => ({...r, value: r.value === Infinity ? "OL" : r.value}))};
   download(`측정앱_백업_${today()}.json`, JSON.stringify(out), "application/json");
   ls.set("last-backup", today()); toast("백업 파일을 저장했어요");
 }
@@ -834,7 +964,7 @@ function moreSheet(){
   $("#rs").onclick = () => { closeModal(); pickFile(importFile); };
   $("#exAdd").onclick = () => { closeModal(); addExamples(); };
   $("#exDel").onclick = async () => { const ids = S.items.filter(i => i.id.startsWith("example-")).map(i => i.id); await DB.delMany("items", ids); const rids = S.records.filter(r => r.itemId.startsWith("example-")).map(r => r.id); await DB.delMany("records", rids); await loadAll(); closeModal(); toast("예시를 지웠어요"); render(); };
-  $("#wipe").onclick = async () => { if (!confirm("항목과 기록을 모두 지울까요? 되돌릴 수 없어요.")) return; if (!confirm("정말 지울까요? 백업이 없으면 복구할 수 없어요.")) return; await DB.clear("items"); await DB.clear("records"); await loadAll(); S.cur = null; closeModal(); render(); };
+  $("#wipe").onclick = async () => { if (!confirm("항목과 기록을 모두 지울까요? 되돌릴 수 없어요.")) return; if (!confirm("정말 지울까요? 백업이 없으면 복구할 수 없어요.")) return; await DB.clear("items"); await DB.clear("records"); await DB.del("meta", "refs"); await loadAll(); S.cur = null; S.ckGroup = ""; closeModal(); render(); };
 }
 const EXAMPLES = [
   {id: "example-ir", name: "[예시] 전동기 절연저항", group: "예시", method: "ir_temp", unit: "MΩ", normal: {min: 10}, caution: {min: 1}, params: {refTemp: 20, halveEvery: 10}, points: ["1번", "2번", "3번", "4번"], condition: "연습용 값 — 실제 기준 아님", reviewed: true,
@@ -853,16 +983,18 @@ const hasHowto = it => !!(it.where || (it.howto && it.howto.length) || (it.image
 function howtoHTML(it){
   if (!hasHowto(it)) return "";
   const open = ls.get("howto-open", true);
-  return `<details class="card howto" ${open ? "open" : ""} id="howto"><summary>📋 측정법·측정 부위${it.images?.length ? ` · 사진 ${it.images.length}장` : ""}</summary>
+  return `<details class="card howto" ${open ? "open" : ""} id="howto" data-iid="${esc(it.id)}"><summary>📋 측정법·측정 부위${it.images?.length ? ` · 사진 ${it.images.length}장` : ""}</summary>
     ${it.where ? `<div style="margin-top:6px"><b>측정 부위</b><div style="white-space:pre-wrap;line-height:1.6">${esc(it.where)}</div></div>` : ""}
     ${it.howto?.length ? `<div style="margin-top:8px"><b>측정 순서</b><ol>${it.howto.map(h => `<li>${esc(h)}</li>`).join("")}</ol></div>` : ""}
     ${it.images?.length ? `<div class="imgs">${it.images.map((im, i) => `<figure data-img="${i}"><img src="${esc(im.src)}" alt="${esc(im.caption || "사진")}" loading="lazy">${im.caption || im.page ? `<figcaption>${esc(im.caption || "")}${im.page ? ` (${pageText(im.page)})` : ""}</figcaption>` : ""}</figure>`).join("")}</div>` : ""}
   </details>`;
 }
 document.addEventListener("click", e => {
-  const f = e.target.closest("#howto [data-img]"); if (!f || !S.cur) return;
-  const it = itemById(S.cur); const im = it && it.images[+f.dataset.img]; if (!im) return;
-  openModal(`<div class="sheet-head"><h2>${esc(im.caption || it.name)}</h2><button class="btn sm" data-close>닫기</button></div><div class="viewer"><img src="${esc(im.src)}" alt=""></div><div class="hint">두 손가락으로 벌려서 크게 볼 수 있어요.</div>`);
+  const r = e.target.closest("[data-rimg]");
+  if (r){ const ref = S.refs.find(x => x.id === r.dataset.rid); const im = ref && ref.images[+r.dataset.rimg]; if (im) openViewer(im.src, im.caption || ref.title); return; }
+  const f = e.target.closest("#howto [data-img]"); if (!f) return;
+  const box = f.closest("[data-iid]"); const it = itemById(box ? box.dataset.iid : S.cur); const im = it && it.images[+f.dataset.img]; if (!im) return;
+  openViewer(im.src, im.caption || it.name);
 });
 document.addEventListener("toggle", e => { if (e.target.id === "howto") ls.set("howto-open", e.target.open); }, true);
 let imgCb = null;
@@ -880,7 +1012,7 @@ function shrinkImage(f, max = 1600){
 function openModal(html){ closeModal(); const d = document.createElement("div"); d.className = "modal"; d.id = "modal"; d.innerHTML = `<div class="sheet">${html}</div>`;
   d.addEventListener("click", e => { if (e.target === d || e.target.closest("[data-close]")) closeModal(); }); document.body.appendChild(d); document.body.style.overflow = "hidden"; }
 function closeModal(){ const d = $("#modal"); if (d) d.remove(); document.body.style.overflow = ""; }
-document.addEventListener("keydown", e => { if (e.key === "Escape") closeModal(); });
+document.addEventListener("keydown", e => { if (e.key !== "Escape") return; const v = $("#modal2"); if (v){ v.remove(); if (!$("#modal")) document.body.style.overflow = ""; } else closeModal(); });
 
 /* ===== 시작 ===== */
 (async () => {
