@@ -45,6 +45,9 @@ main{max-width:900px;margin:0 auto;padding:12px 16px 90px}
 .btn.danger{color:var(--danger)}
 .btn.sm{padding:6px 10px;font-size:14px}
 .btn.on{background:var(--chip);color:var(--chip-ink);border-color:var(--chip-ink)}
+.pf{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}.pf .btn{padding:18px 10px;font-size:20px}
+.pf .btn.pass.on{background:var(--ok-bg);color:var(--ok);border-color:var(--ok)}.pf .btn.fail.on{background:var(--bad-bg);color:var(--bad);border-color:var(--bad)}
+.crit{white-space:pre-wrap;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-top:6px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:10px}
 .click{cursor:pointer}
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
@@ -176,9 +179,13 @@ const METHODS = {
   vdrop:     {name: "전압강하(%) 판정", short: "전압강하", hint: "공급 쪽 전압과 부하 쪽 전압을 넣으면 강하율(%)로 판정합니다. 기준 범위는 % 로 넣습니다."},
   imbalance: {name: "상간 불평형(%) 판정", short: "불평형", hint: "U·V·W 처럼 여러 값을 넣으면 (최대−최소)÷평균 으로 불평형률을 구해 판정합니다. 기준 범위는 % 로 넣습니다."},
   formula:   {name: "여러 값으로 계산 (공식)", short: "공식", hint: "여러 측정값을 넣으면 정해 둔 공식으로 계산해서 판정합니다. 예) 입력값 KO,KC / 공식 KO-KC"},
+  check:     {name: "합격/불합격 (숫자 없음)", short: "합격/불합격", hint: "숫자 없이 판정 기준을 보고 합격·불합격을 고릅니다. 눈으로 확인, 동작 확인, 내전압 시험처럼 결과가 되고/안 되고인 항목에 씁니다."},
   contact:   {name: "단선·접촉불량 (저항)", short: "단선/접촉", hint: "선이나 접점 저항을 재서 정상 저항과 비교합니다. OL(무한대)이면 단선, 정상보다 많이 높으면 접촉불량 의심입니다."},
 };
-const resultUnit = it => (["deviation", "vdrop", "imbalance"].includes(it.method) ? "%" : (it.unit || ""));
+const resultUnit = it => (["deviation", "vdrop", "imbalance"].includes(it.method) ? "%" : it.method === "check" ? "" : (it.unit || ""));
+const isCheck = it => it && it.method === "check";
+const critText = it => String((it.params && it.params.criteria) || "").trim();
+const recVal = r => r.kind === "check" ? "" : `${fmt(r.value)} ${r.unit || ""}`;
 
 function bandText(b, u){
   if (!b) return "";
@@ -190,6 +197,7 @@ function bandText(b, u){
 }
 const inBand = (v, b) => b && (has(b.min) || has(b.max)) && (!has(b.min) || v >= +b.min) && (!has(b.max) || v <= +b.max);
 function stdText(it){
+  if (isCheck(it)){ const c = critText(it).replace(/\s+/g, " "); return c ? "합격 기준: " + (c.length > 70 ? c.slice(0, 70) + "…" : c) : "합격/불합격"; }
   const u = resultUnit(it); const n = bandText(it.normal, u); const c = bandText(it.caution, u);
   let s = n ? `정상 ${n}` : "기준값 없음";
   if (c) s += ` · 주의 ${c}`;
@@ -199,6 +207,11 @@ function stdText(it){
 /* 입력값 → 계산값, 판정 */
 function evaluate(it, inp){
   const p = it.params || {}; const u = resultUnit(it); let v, detail = "", extra = {};
+  if (isCheck(it)){
+    if (inp.pf !== "pass" && inp.pf !== "fail") return null;
+    const ok = inp.pf === "pass";
+    return {value: ok ? 1 : 0, unit: "", verdict: ok ? "ok" : "bad", label: ok ? "합격" : "불합격", detail: "", inputs: inp, kind: "check"};
+  }
   switch (it.method){
     case "ir_temp": {
       const r = num(inp.r), t = num(inp.temp);
@@ -271,6 +284,7 @@ function fEval(expr, vals){
 }
 const phaseLabels = it => { const s = (it.params && it.params.phases) || "U,V,W"; const a = String(s).split(/[,\s/]+/).filter(Boolean); return a.length >= 2 ? a : ["U", "V", "W"]; };
 function whyText(it, r){
+  if (isCheck(it)) return "";
   if (r.verdict === "none") return "이 항목에 정상 범위가 아직 없어요. 기준값 탭에서 넣어 주세요.";
   if (r.label === "단선") return "선이 끊겼거나 접점이 완전히 떨어져 있습니다.";
   const u = resultUnit(it);
@@ -330,6 +344,7 @@ function pickItem(id){
 function inputFields(it, inp, pre){
   const u = esc(it.unit || ""); const p = it.params || {};
   const numIn = (k, label, ph, ol) => `<label class="f">${label}</label><div class="inrow"><input class="t" inputmode="decimal" id="${pre}${k}" data-k="${k}" placeholder="${esc(ph || "")}" value="${esc(inp[k] ?? "")}" autocomplete="off">${ol ? `<button class="btn" data-ol="${k}" type="button">OL</button>` : ""}</div>`;
+  if (isCheck(it)) return `${critText(it) ? `<label class="f">판정 기준</label><div class="crit">${esc(critText(it))}</div>` : ""}<div class="pf"><button class="btn pass ${inp.pf === "pass" ? "on" : ""}" data-pf="pass" type="button">✔ 합격</button><button class="btn fail ${inp.pf === "fail" ? "on" : ""}" data-pf="fail" type="button">✖ 불합격</button></div>`;
   switch (it.method){
     case "ir_temp": return numIn("r", `절연저항 (${u || "MΩ"})`, "측정값", true) + numIn("temp", `측정할 때 온도 (℃) — 기준 ${has(p.refTemp) ? p.refTemp : 20}℃로 환산`, "예: 28");
     case "deviation": return numIn("x", `측정값 (${u})`, `기준 ${has(p.ref) ? fmt(+p.ref) : "?"} ${it.unit||""}`) + (has(p.cuRef) ? numIn("temp", `측정할 때 온도 (℃) — 구리 코일 ${p.cuRef}℃로 환산`, "예: 25") : "");
@@ -344,15 +359,16 @@ function bindInputs(root, inp, onChange){
   root.querySelectorAll("[data-k]").forEach(el => el.oninput = () => { inp[el.dataset.k] = el.value; onChange(); });
   root.querySelectorAll("[data-fk]").forEach(el => el.oninput = () => { (inp.f = inp.f || {})[el.dataset.fk] = el.value; onChange(); });
   root.querySelectorAll("[data-ph]").forEach(el => el.oninput = () => { (inp.ph = inp.ph || [])[+el.dataset.ph] = el.value; onChange(); });
+  root.querySelectorAll("[data-pf]").forEach(b => b.onclick = () => { inp.pf = b.dataset.pf; root.querySelectorAll("[data-pf]").forEach(x => x.classList.toggle("on", x === b)); onChange(); });
   root.querySelectorAll("[data-ol]").forEach(b => b.onclick = () => { const k = b.dataset.ol; inp[k] = "OL"; const el = root.querySelector(`[data-k="${k}"]`); if (el) el.value = "OL"; onChange(); });
 }
 function verdictHTML(it, r){
-  if (!r) return `<div class="verdict v-none"><div class="why">값을 넣으면 바로 판정합니다.</div></div>`;
+  if (!r) return `<div class="verdict v-none"><div class="why">${isCheck(it) ? "확인해 보고 합격·불합격을 눌러 주세요." : "값을 넣으면 바로 판정합니다."}</div></div>`;
   const cls = {ok: "v-ok", cau: "v-cau", bad: "v-bad", none: "v-none"}[r.verdict];
   const icon = {ok: "✔ ", cau: "⚠ ", bad: "✖ ", none: ""}[r.verdict];
-  const shown = r.value === Infinity ? "∞ (OL)" : `${["deviation"].includes(it.method) && r.value >= 0 ? "+" : ""}${fmt(r.value, ["vdrop", "imbalance", "deviation"].includes(it.method) ? 2 : undefined)} ${esc(r.unit)}`;
-  return `<div class="verdict ${cls}"><div class="big">${icon}${esc(r.label)}</div><div class="val">${shown}</div>
-    ${r.detail ? `<div class="why">${esc(r.detail)}</div>` : ""}<div class="why">${esc(whyText(it, r))}</div></div>`;
+  const shown = isCheck(it) ? "" : r.value === Infinity ? "∞ (OL)" : `${["deviation"].includes(it.method) && r.value >= 0 ? "+" : ""}${fmt(r.value, ["vdrop", "imbalance", "deviation"].includes(it.method) ? 2 : undefined)} ${esc(r.unit)}`;
+  return `<div class="verdict ${cls}"><div class="big">${icon}${esc(r.label)}</div>${shown ? `<div class="val">${shown}</div>` : ""}
+    ${r.detail ? `<div class="why">${esc(r.detail)}</div>` : ""}${whyText(it, r) ? `<div class="why">${esc(whyText(it, r))}</div>` : ""}</div>`;
 }
 function prevRecord(itemId, car, point, beforeId){
   return S.records.filter(r => r.itemId === itemId && (r.car || "") === (car || "") && (r.point || "") === (point || "") && r.id !== beforeId)
@@ -360,8 +376,8 @@ function prevRecord(itemId, car, point, beforeId){
 }
 function compareHTML(it, r, car, point){
   const p = prevRecord(it.id, car, point); if (!p) return "";
-  let s = `지난번 (${esc(p.date)}): <b>${esc(fmt(p.value))} ${esc(p.unit)}</b> <span class="tag ${p.verdict}">${esc(p.label)}</span>`;
-  if (r && Number.isFinite(r.value) && Number.isFinite(p.value) && p.value !== 0 && !["deviation", "vdrop", "imbalance"].includes(it.method)){
+  let s = `지난번 (${esc(p.date)}): ${p.kind === "check" ? "" : `<b>${esc(fmt(p.value))} ${esc(p.unit)}</b> `}<span class="tag ${p.verdict}">${esc(p.label)}</span>`;
+  if (r && !isCheck(it) && p.kind !== "check" && Number.isFinite(r.value) && Number.isFinite(p.value) && p.value !== 0 && !["deviation", "vdrop", "imbalance"].includes(it.method)){
     const ch = (r.value - p.value) / Math.abs(p.value) * 100;
     s += ` → 이번 ${ch >= 0 ? "+" : ""}${fmt(ch, 1)}%`;
     if (Math.abs(ch) >= 30) s += `<div class="warn">지난번보다 ${Math.abs(ch) >= 50 ? "크게 " : ""}${ch > 0 ? "올랐어요" : "떨어졌어요"}. 판정이 정상이어도 한 번 더 확인해 보세요.</div>`;
@@ -404,10 +420,11 @@ function renderMeasureForm(){
   $("#back").onclick = () => { S.cur = null; renderMeasure(); };
   $("#editIt").onclick = () => editItem(it);
   $("#save").onclick = async () => {
-    const r = upd(); if (!r) return toast("측정값을 먼저 넣어 주세요");
+    const r = upd(); if (!r) return toast(isCheck(it) ? "합격·불합격을 먼저 골라 주세요" : "측정값을 먼저 넣어 주세요");
     const rec = {id: uid(), itemId: it.id, itemName: it.name, group: it.group || "", car: inp.car.trim(), point: inp.point.trim(), date: inp.date || today(), ts: new Date().toISOString(),
       inputs: JSON.parse(JSON.stringify(inp)), value: r.value === Infinity ? Infinity : r.value, unit: r.unit, verdict: r.verdict, label: r.label, detail: r.detail || "",
       std: stdText(it), reviewedStd: !!it.reviewed, memo: inp.memo.trim()};
+    if (isCheck(it)) rec.kind = "check";
     delete rec.inputs.car; delete rec.inputs.point; delete rec.inputs.date; delete rec.inputs.memo;
     await DB.put("records", serRec(rec)); S.records.push(rec);
     ls.set("meas-car", rec.car); const pm = ls.get("meas-pt", {}); pm[it.id] = rec.point; ls.set("meas-pt", pm);
@@ -450,7 +467,7 @@ function renderRecords(){
     ${gl.map(a => { const l = a.at(-1); const nm = (itemById(l.itemId) || {}).name || l.itemName;
       return `<div class="card click" data-grp="${esc(key(l))}">
       <div class="row"><span class="it-name grow">${esc(nm)}</span><span class="tag ${l.verdict}">${esc(l.label)}</span></div>
-      <div class="std">${esc(l.car || "차량 미입력")}${l.point ? " · " + esc(l.point) : ""} · ${a.length}회 · 최근 ${esc(l.date)} <b class="num">${esc(fmt(l.value))} ${esc(l.unit)}</b></div>
+      <div class="std">${esc(l.car || "차량 미입력")}${l.point ? " · " + esc(l.point) : ""} · ${a.length}회 · 최근 ${esc(l.date)} <b class="num">${esc(recVal(l))}</b></div>
       ${a.length > 1 ? spark(a) : ""}</div>`; }).join("") || `<div class="empty">조건에 맞는 기록이 없어요.</div>`}`;
   $("#fItem").onchange = e => { f.item = e.target.value; renderRecords(); };
   $("#fCar").onchange = e => { f.car = e.target.value; renderRecords(); };
@@ -466,6 +483,7 @@ function spark(a){
   return `<svg class="trend" viewBox="0 0 ${W} ${H}" style="max-width:300px;margin-top:6px" aria-hidden="true"><polyline fill="none" stroke="var(--sub)" stroke-width="1.5" points="${pts.map(p => p[0] + "," + p[1]).join(" ")}"/>${pts.map(p => `<circle cx="${p[0]}" cy="${p[1]}" r="3" fill="${vColor(p[2])}"/>`).join("")}</svg>`;
 }
 function trendChart(a, it){
+  if (isCheck(it) || a.every(r => r.kind === "check")) return `<div class="chips">${a.map(r => `<span class="tag ${r.verdict}">${esc(r.date.slice(2).replace(/-/g, "."))} ${esc(r.label)}</span>`).join("")}</div>`;
   const W = 480, H = 240, L = 50, R = 10, T = 12, B = 30;
   const vals = a.map(r => r.value).filter(Number.isFinite);
   const bands = []; const nb = it ? it.normal : null, cb = it ? it.caution : null;
@@ -499,7 +517,7 @@ function openGroup(k){
     <div class="muted">${esc(car || "차량 미입력")}${point ? " · " + esc(point) : ""} · ${it ? esc(stdText(it)) : "항목이 지워짐"}</div>
     <div style="margin-top:10px">${trendChart(a, it)}</div>
     <table class="rec" style="margin-top:10px"><tr><th>날짜</th><th>값</th><th>판정</th><th></th></tr>
-    ${a.slice().reverse().map(r => `<tr><td class="num">${esc(r.date)}</td><td><b class="num">${esc(fmt(r.value))} ${esc(r.unit)}</b>${r.memo ? `<div class="muted">${esc(r.memo)}</div>` : ""}${r.detail ? `<div class="muted">${esc(r.detail)}</div>` : ""}</td><td><span class="tag ${r.verdict}">${esc(r.label)}</span></td><td><button class="btn sm danger" data-delrec="${r.id}">지우기</button></td></tr>`).join("")}</table>`);
+    ${a.slice().reverse().map(r => `<tr><td class="num">${esc(r.date)}</td><td><b class="num">${esc(recVal(r) || r.label)}</b>${r.memo ? `<div class="muted">${esc(r.memo)}</div>` : ""}${r.detail ? `<div class="muted">${esc(r.detail)}</div>` : ""}</td><td><span class="tag ${r.verdict}">${esc(r.label)}</span></td><td><button class="btn sm danger" data-delrec="${r.id}">지우기</button></td></tr>`).join("")}</table>`);
   document.querySelectorAll("[data-delrec]").forEach(b => b.onclick = async () => {
     if (!confirm("이 기록을 지울까요?")) return;
     await DB.del("records", b.dataset.delrec); S.records = S.records.filter(r => r.id !== b.dataset.delrec); renderRecords(); openGroup(k);
@@ -507,7 +525,7 @@ function openGroup(k){
 }
 function exportCSV(list){
   const rows = [["날짜", "항목", "분류", "차량", "위치", "값", "단위", "판정", "계산 내용", "당시 기준", "메모"]];
-  list.slice().sort((a, b) => (a.date + a.ts).localeCompare(b.date + b.ts)).forEach(r => rows.push([r.date, (itemById(r.itemId) || {}).name || r.itemName, r.group, r.car, r.point, r.value === Infinity ? "OL" : r.value, r.unit, r.label, r.detail, r.std, r.memo]));
+  list.slice().sort((a, b) => (a.date + a.ts).localeCompare(b.date + b.ts)).forEach(r => rows.push([r.date, (itemById(r.itemId) || {}).name || r.itemName, r.group, r.car, r.point, r.kind === "check" ? "" : r.value === Infinity ? "OL" : r.value, r.unit, r.label, r.detail, r.std, r.memo]));
   const csv = "﻿" + rows.map(r => r.map(c => `"${String(c ?? "").replace(/"/g, '""')}"`).join(",")).join("\r\n");
   download(`측정기록_${today()}.csv`, csv, "text/csv");
 }
@@ -654,11 +672,12 @@ function editItem(it){
       ${mt === "deviation" ? `<label class="f">기준값 (${esc(d.unit || "단위")})</label><input class="t" inputmode="decimal" id="p_ref" value="${esc(d.params.ref ?? "")}" placeholder="예: 12.5"><label class="f">구리 코일 온도 환산 기준온도 (℃, 선택 — 넣으면 온도 입력칸이 생김)</label><input class="t" inputmode="decimal" id="p_cuRef" value="${esc(d.params.cuRef ?? "")}" placeholder="예: 20">` : ""}
       ${mt === "vdrop" ? `<label class="f">정격 전압 (V, 선택 — 넣으면 정격 기준 %, 비우면 공급 전압 기준 %)</label><input class="t" inputmode="decimal" id="p_nominal" value="${esc(d.params.nominal ?? "")}">` : ""}
       ${mt === "formula" ? `<div class="grid2"><div><label class="f">입력값 이름 (쉼표로 구분)</label><input class="t" id="p_inputs" value="${esc(d.params.inputs ?? "")}" placeholder="예: KO,KC"></div><div><label class="f">공식 (+ − × ÷ 괄호)</label><input class="t" id="p_expr" value="${esc(d.params.expr ?? "")}" placeholder="예: KO-KC"></div></div>` : ""}
+      ${mt === "check" ? `<label class="f">판정 기준 (무엇이면 합격인지)</label><textarea class="t" id="p_criteria" style="min-height:90px" placeholder="예: 섬락·절연파괴 없이 1분간 견딜 것">${esc(d.params.criteria ?? "")}</textarea>` : ""}
       ${mt === "imbalance" ? `<label class="f">상 이름 (쉼표로 구분)</label><input class="t" id="p_phases" value="${esc(d.params.phases ?? "U,V,W")}">` : ""}
-      <h3>판정 기준 (${esc(pu)})</h3>
+      ${mt === "check" ? "" : `<h3>판정 기준 (${esc(pu)})</h3>
       ${bandInputs("n_", d.normal, "정상")}
       ${bandInputs("c_", d.caution, "주의")}
-      <div class="hint">정상 범위 안 → 정상 · 정상은 벗어났지만 주의 범위 안 → 주의 · 둘 다 벗어나면 → 이상.<br>예) 1 MΩ 이상 정상, 0.5~1 MΩ 주의 → 정상 최소 1, 주의 최소 0.5. 주의 단계가 없으면 주의 칸은 비워 두세요.</div>
+      <div class="hint">정상 범위 안 → 정상 · 정상은 벗어났지만 주의 범위 안 → 주의 · 둘 다 벗어나면 → 이상.<br>예) 1 MΩ 이상 정상, 0.5~1 MΩ 주의 → 정상 최소 1, 주의 최소 0.5. 주의 단계가 없으면 주의 칸은 비워 두세요.</div>`}
       <div id="e_chk"></div>
       <label class="f">측정 위치 목록 (쉼표로 구분, 선택)</label><input class="t" id="e_points" value="${esc((d.points || []).join(", "))}" placeholder="예: 1번, 2번, 3번, 4번">
       <h3>측정법·측정 부위</h3>
@@ -682,6 +701,7 @@ function editItem(it){
       d.normal = clean({min: nb("n_min"), max: nb("n_max")}); d.caution = clean({min: nb("c_min"), max: nb("c_max")});
       ["refTemp", "halveEvery", "ref", "nominal", "cuRef"].forEach(k => { if ($("#p_" + k)){ const s = v("p_" + k); if (s === "") delete d.params[k]; else d.params[k] = num(s); } });
       if ($("#p_phases")) d.params.phases = v("p_phases");
+      if ($("#p_criteria")) d.params.criteria = $("#p_criteria").value.trim();
       if ($("#p_inputs")) { d.params.inputs = v("p_inputs"); d.params.expr = v("p_expr"); }
       d.points = v("e_points").split(/[,，]/).map(s => s.trim()).filter(Boolean);
       d.condition = v("e_cond"); d.note = $("#e_note").value.trim();
@@ -716,6 +736,7 @@ function editItem(it){
 const clean = o => { Object.keys(o).forEach(k => (o[k] === undefined || o[k] === "" || (typeof o[k] === "number" && Number.isNaN(o[k]))) && delete o[k]); return o; };
 function checkItem(d){
   const w = [], n = d.normal || {}, c = d.caution || {};
+  if (d.method === "check") return critText(d) ? w : ["판정 기준을 적어 두면 측정할 때 같이 보여요."];
   if (!has(n.min) && !has(n.max)) w.push("정상 범위가 비어 있어요. 이대로면 판정 없이 값만 기록됩니다.");
   if (has(n.min) && has(n.max) && +n.min > +n.max) w.push("정상 최소가 최대보다 커요.");
   if (has(c.min) && has(c.max) && +c.min > +c.max) w.push("주의 최소가 최대보다 커요.");
@@ -742,7 +763,7 @@ function normItem(x){
     where: String(x.where || ""), howto: Array.isArray(x.howto) ? x.howto.map(String).filter(Boolean) : (x.howto ? String(x.howto).split("\n").filter(Boolean) : []),
     images: (Array.isArray(x.images) ? x.images : []).map(im => typeof im === "string" ? {src: im} : im).map(im => ({src: imgPool[im.ref] || im.src, caption: String(im.caption || ""), page: im.page !== undefined ? String(im.page) : undefined}))
       .filter(im => typeof im.src === "string" && /^data:image\/(png|jpe?g|webp|gif);base64,/.test(im.src)).map(clean)};
-  const p = x.params || {}; ["refTemp", "halveEvery", "ref", "nominal", "cuRef"].forEach(k => { if (has(p[k])) it.params[k] = +p[k]; }); if (p.phases) it.params.phases = String(p.phases); if (p.inputs) it.params.inputs = String(p.inputs); if (p.expr) it.params.expr = String(p.expr);
+  const p = x.params || {}; ["refTemp", "halveEvery", "ref", "nominal", "cuRef"].forEach(k => { if (has(p[k])) it.params[k] = +p[k]; }); if (p.phases) it.params.phases = String(p.phases); if (p.inputs) it.params.inputs = String(p.inputs); if (p.expr) it.params.expr = String(p.expr); if (p.criteria) it.params.criteria = String(p.criteria);
   return it;
 }
 const stdKey = a => JSON.stringify([a.name, a.group, a.method, a.unit, a.normal, a.caution, a.params, a.points, a.condition, a.where || "", a.howto || [], (a.images || []).map(im => (im.caption || "") + im.src.length + im.src.slice(-40))]);
