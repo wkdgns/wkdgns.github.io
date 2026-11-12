@@ -1129,7 +1129,12 @@ document.addEventListener("keydown", e => { if (e.key !== "Escape") return; cons
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch {}
   render();
   const upd = () => { $("#offline").textContent = navigator.onLine ? "" : "오프라인"; }; addEventListener("online", upd); addEventListener("offline", upd); upd();
-  if ("serviceWorker" in navigator && window.isSecureContext && location.protocol !== "file:") navigator.serviceWorker.register("sw.js").catch(() => {});
+  if ("serviceWorker" in navigator && window.isSecureContext && location.protocol !== "file:"){
+    // 새 버전을 받으면 한 번만 저절로 새로고침 (처음 설치 때는 안 함)
+    const had = !!navigator.serviceWorker.controller; let done = false;
+    navigator.serviceWorker.addEventListener("controllerchange", () => { if (had && !done){ done = true; location.reload(); } });
+    navigator.serviceWorker.register("sw.js").then(r => { r.update().catch(() => {}); document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") r.update().catch(() => {}); }); }).catch(() => {});
+  }
 })();
 </script>
 </body>
