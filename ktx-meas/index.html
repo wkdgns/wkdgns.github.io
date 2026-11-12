@@ -895,9 +895,11 @@ function toolOhm(el){
 }
 
 /* ===== 기준값 탭 ===== */
+const noPhoto = i => !(i.images || []).length;
+const refPhoto = i => (i.images || []).length > 0 && i.images.every(im => /^장치 사진\(참고\)/.test(im.caption || ""));
 function renderItems(){
   const m = $("#main"); const n = unreviewed(); const q = S.itemFilter.trim().toLowerCase();
-  const list = S.items.filter(i => (S.itemGroup !== "__rev" || !i.reviewed) && (!S.itemGroup || S.itemGroup === "__rev" || (i.group || "기타") === S.itemGroup) && (!q || (i.name + " " + (i.group || "") + " " + (i.source?.doc || "")).toLowerCase().includes(q)));
+  const list = S.items.filter(i => (S.itemGroup !== "__rev" || !i.reviewed) && (S.itemGroup !== "__nophoto" || noPhoto(i)) && (S.itemGroup !== "__refphoto" || refPhoto(i)) && (!S.itemGroup || S.itemGroup.startsWith("__") || (i.group || "기타") === S.itemGroup) && (!q || (i.name + " " + (i.group || "") + " " + (i.source?.doc || "")).toLowerCase().includes(q)));
   const meta = ls.get("std-meta", null);
   m.innerHTML = `
     <div class="card">
@@ -907,7 +909,7 @@ function renderItems(){
     </div>
     ${n ? `<div class="warn" style="margin-bottom:10px"><b>확인 전 항목 ${n}개</b> — 매뉴얼에서 자동으로 뽑은 값은 틀릴 수 있어요. 항목을 눌러 원문과 비교한 뒤 <b>맞아요</b>를 눌러 주세요. <button class="btn sm" id="revOnly" style="margin-left:6px">확인 전만 보기</button></div>` : ""}
     <input class="t" id="iq" placeholder="항목 찾기" value="${esc(S.itemFilter)}">
-    <div class="chips" style="margin-top:8px"><button class="chip ${!S.itemGroup ? "on" : ""}" data-ig="">전체 ${S.items.length}</button>${n ? `<button class="chip ${S.itemGroup === "__rev" ? "on" : ""}" data-ig="__rev">확인 전 ${n}</button>` : ""}${groups().map(g => `<button class="chip ${S.itemGroup === g ? "on" : ""}" data-ig="${esc(g)}">${esc(g)}</button>`).join("")}</div>
+    <div class="chips" style="margin-top:8px"><button class="chip ${!S.itemGroup ? "on" : ""}" data-ig="">전체 ${S.items.length}</button>${n ? `<button class="chip ${S.itemGroup === "__rev" ? "on" : ""}" data-ig="__rev">확인 전 ${n}</button>` : ""}${S.items.some(noPhoto) ? `<button class="chip ${S.itemGroup === "__nophoto" ? "on" : ""}" data-ig="__nophoto">📷 사진 없음 ${S.items.filter(noPhoto).length}</button>` : ""}${S.items.some(refPhoto) ? `<button class="chip ${S.itemGroup === "__refphoto" ? "on" : ""}" data-ig="__refphoto">📷 참고 사진만 ${S.items.filter(refPhoto).length}</button>` : ""}${groups().map(g => `<button class="chip ${S.itemGroup === g ? "on" : ""}" data-ig="${esc(g)}">${esc(g)}</button>`).join("")}</div>
     <div style="margin-top:10px">${list.map(i => `<div class="card click" data-ed="${i.id}">
       <div class="row"><span class="it-name grow">${esc(i.name)}</span>${i.reviewed ? `<span class="tag ok">확인함</span>` : `<span class="tag rev">확인 전</span>`}</div>
       <div class="std">${esc(i.group || "기타")}${i.level ? " · " + esc(i.level) : ""}${i.cycle ? " (" + esc(i.cycle) + ")" : ""} · ${esc(METHODS[i.method]?.short || "")} · ${esc(stdText(i))}${hasHowto(i) ? " · 📋 측정법" + (i.images?.length ? ` 📷${i.images.length}` : "") : ""}</div>
@@ -1070,7 +1072,7 @@ async function importFile(f){
     <div class="row" style="margin-top:14px"><span class="grow"></span><button class="btn primary" id="doImp" ${add.length + chg.length + refs.length + pwu.length ? "" : "disabled"}>불러오기</button></div>`);
   $("#doImp").onclick = async () => {
     const ovr = $("#ovr") ? $("#ovr").checked : false;
-    const put = add.concat(ovr ? chg.map(([o, n]) => ({...n, reviewed: n.reviewed || (o.reviewed && sameStd({...o, power: ""}, {...n, power: ""}))})) : [], pwu);
+    const put = add.concat(ovr ? chg.map(([o, n]) => ({...n, images: (n.images || []).concat((o.images || []).filter(im => !(n.images || []).some(x => x.src === im.src))), reviewed: n.reviewed || (o.reviewed && sameStd({...o, images: []}, {...n, images: []}))})) : [], pwu);
     await DB.putMany("items", put); if (refs.length) await saveRefs(refs); await loadAll();
     ls.set("std-meta", {name: f.name, title: j.title || "", date: today()});
     closeModal(); toast(`${put.length - pwu.length}개 항목을 넣었어요${pwu.length ? ` · 구분 정보 ${pwu.length}개` : ""}${refs.length ? ` · 토크·참고표 ${refs.length}개` : ""}`); S.itemGroup = unreviewed() ? "__rev" : ""; render();
