@@ -313,7 +313,7 @@ function whyText(it, r){
 }
 
 /* ===== 상태 ===== */
-const S = { items: [], records: [], tab: "measure", cur: null, inp: {}, recFilter: {}, itemFilter: "", itemGroup: "", measGroup: "", measQ: "", msFilter: "", pwF: ls.get("pwF", ""), lvF: ls.get("lvF", ""), ckGroup: "", ckFilter: "", refs: [] };
+const S = { items: [], records: [], tab: "measure", cur: null, inp: {}, recFilter: {}, itemFilter: "", itemGroup: "", measGroup: "", measQ: "", msFilter: "", pwF: ls.get("pwF", ""), lvF: ls.get("lvF", ""), wF: ls.get("wF", "base"), ckGroup: "", ckFilter: "", refs: [] };
 async function loadAll(){ S.items = await DB.all("items"); S.records = await DB.all("records"); S.items.sort(byItem); const rm = (await DB.all("meta")).find(x => x.k === "refs"); S.refs = rm && Array.isArray(rm.v) ? rm.v : []; }
 const byItem = (a, b) => (a.group || "").localeCompare(b.group || "", "ko") || (a.name || "").localeCompare(b.name || "", "ko");
 const itemById = id => S.items.find(i => i.id === id);
@@ -374,6 +374,16 @@ function pwCount(items){ const nh = items.filter(it => pwOf(it) === "hv").length
 /* 정비 구분: 중정비 / 경정비 / 고장수리 (+ 경정비 주기) */
 const LVS = ["중정비", "경정비", "고장수리"];
 const lvOk = it => !S.lvF || (it.level || "") === S.lvF;
+/* 기본 측정 / 조건부(탈거·교체·이상 시에만) */
+const wOk = it => S.lvF === "고장수리" || S.wF === "all" || (S.wF === "cond") === !!it.when;
+const vis = it => lvOk(it) && wOk(it);
+function wChips(items){
+  items = items.filter(lvOk);
+  if (S.lvF === "고장수리" || !items.some(i => i.when)) return "";
+  const nc = items.filter(i => i.when).length;
+  return `<div class="chips"><button class="chip ${S.wF === "base" ? "on" : ""}" data-wf="base">기본 측정 ${items.length - nc}</button><button class="chip ${S.wF === "cond" ? "on" : ""}" data-wf="cond">🔧 탈거·교체·이상 시 ${nc}</button><button class="chip ${S.wF === "all" ? "on" : ""}" data-wf="all">모두</button></div>`;
+}
+function bindW(m, redraw){ m.querySelectorAll("[data-wf]").forEach(b => b.onclick = () => { S.wF = b.dataset.wf; ls.set("wF", S.wF); redraw(); }); }
 const lvTag = it => it.level || it.cycle ? `<span class="tag lv lv-${esc(it.level || "")}">${esc([it.level, it.cycle].filter(Boolean).join(" · "))}</span>` : "";
 function lvChips(items){
   if (!items.some(i => i.level)) return "";
@@ -382,19 +392,19 @@ function lvChips(items){
 function bindLv(m, redraw){ m.querySelectorAll("[data-lvf]").forEach(b => b.onclick = () => { S.lvF = b.dataset.lvf; ls.set("lvF", S.lvF); redraw(); }); }
 function bindPw(m, redraw){ m.querySelectorAll("[data-pwf]").forEach(b => b.onclick = () => { S.pwF = b.dataset.pwf; ls.set("pwF", S.pwF); redraw(); }); }
 /* 장치별 측정표 */
-const msItems = g => S.items.filter(i => !isCheck(i) && lvOk(i) && (i.group || "기타") === g).sort((a, b) => pnum(a) - pnum(b) || a.name.localeCompare(b.name, "ko"));
+const msItems = g => S.items.filter(i => !isCheck(i) && vis(i) && (i.group || "기타") === g).sort((a, b) => pnum(a) - pnum(b) || a.name.localeCompare(b.name, "ko"));
 function msDraft(g){ const all = ls.get("ms-draft", {}); const d = all[g] || {}; return {car: d.car ?? ls.get("meas-car", ""), date: d.date || today(), inp: d.inp || {}, memo: d.memo || {}, lead: d.lead || {}}; }
 function msSave(g, d){ const all = ls.get("ms-draft", {}); all[g] = d; ls.set("ms-draft", all); }
 const msInp = (it, inp, d) => it.method === "contact" && d && d.lead && has(num(d.lead[it.id])) ? {...inp, lead: d.lead[it.id]} : inp;
 const msFilled = (it, inp, d) => !!(inp && evaluate(it, msInp(it, inp, d)));
 function renderMeasDevices(){
   const m = $("#main");
-  const gs = [...new Set(S.items.filter(i => !isCheck(i) && lvOk(i)).map(i => i.group || "기타"))].sort((a, b) => a.localeCompare(b, "ko"));
+  const gs = [...new Set(S.items.filter(i => !isCheck(i) && vis(i)).map(i => i.group || "기타"))].sort((a, b) => a.localeCompare(b, "ko"));
   const drafts = ls.get("ms-draft", {});
   const recent = ls.get("meas-recent", []).map(itemById).filter(Boolean).slice(0, 6);
   m.innerHTML = `<input class="t" id="mq" placeholder="항목 하나만 찾아서 측정 (예: 절연, 접촉기)" value="">
     ${recent.length ? `<div class="muted" style="margin-top:12px">최근에 쓴 항목</div><div class="chips">${recent.map(i => `<button class="chip" data-pick="${i.id}">${esc(i.name)}</button>`).join("")}</div>` : ""}
-    ${lvChips(S.items.filter(i => !isCheck(i)))}
+    ${lvChips(S.items.filter(i => !isCheck(i)))}${wChips(S.items.filter(i => !isCheck(i)))}
     <div class="muted" style="margin:12px 0 8px">장치를 고르면 측정 항목이 표로 나와요. 값을 넣으면 바로 판정하고, 측정 방법은 각 항목의 <b>📋 측정방법</b>을 누르면 볼 수 있어요.</div>` +
     (gs.map(g => {
       const its = msItems(g), rows = its.flatMap(ckRows), d = drafts[g];
@@ -404,7 +414,7 @@ function renderMeasDevices(){
         <div class="std">${done ? `작성 중 ${done} / ${rows.length}` : `측정 칸 ${rows.length}개`}${pwCount(its)}${last ? ` · 마지막 저장 ${esc(last)}` : ""}</div></div>`; }).join("") || `<div class="empty">숫자로 재는 항목이 없어요.</div>`);
   const mq = $("#mq"); mq.oninput = () => { S.measQ = mq.value; renderMeasure(); const n = $("#mq"); n.focus(); n.setSelectionRange(n.value.length, n.value.length); };
   m.querySelectorAll("[data-pick]").forEach(b => b.onclick = () => pickItem(b.dataset.pick));
-  bindLv(m, renderMeasure);
+  bindLv(m, renderMeasure); bindW(m, renderMeasure);
   m.querySelectorAll("[data-msg]").forEach(b => b.onclick = () => { S.measGroup = b.dataset.msg; S.msFilter = ""; renderMeasure(); window.scrollTo(0, 0); });
 }
 function rShort(it, r){
@@ -432,9 +442,9 @@ function renderMeasSheet(){
       <div><label class="f">측정 날짜</label><input class="t" type="date" id="msDate" value="${esc(d.date)}"></div></div>
     <div class="card" style="margin-top:10px"><div class="row"><b class="grow" id="msProg">진행 ${nDone} / ${rows.length}</b><span id="msBad">${nBad ? `<span class="tag bad">이상·주의 ${nBad}</span>` : ""}</span></div>
       <div class="bar"><i id="msBar" style="width:${rows.length ? nDone / rows.length * 100 : 0}%"></i></div></div>
-    <div class="chips"><button class="chip ${!f ? "on" : ""}" data-msf="">전체 ${items.length}</button><button class="chip ${f === "left" ? "on" : ""}" data-msf="left">남은 것</button><button class="chip ${f === "bad" ? "on" : ""}" data-msf="bad">이상·주의</button></div>${lvChips(S.items.filter(i => !isCheck(i) && (i.group || "기타") === g))}${pwChips(items)}
+    <div class="chips"><button class="chip ${!f ? "on" : ""}" data-msf="">전체 ${items.length}</button><button class="chip ${f === "left" ? "on" : ""}" data-msf="left">남은 것</button><button class="chip ${f === "bad" ? "on" : ""}" data-msf="bad">이상·주의</button></div>${lvChips(S.items.filter(i => !isCheck(i) && (i.group || "기타") === g))}${wChips(S.items.filter(i => !isCheck(i) && (i.group || "기타") === g))}${pwChips(items)}
     <div style="margin-top:8px">${secs(items.filter(show).filter(pwOk), it => `<div class="card ck">
-      <div class="row"><span class="it-name grow">${esc(it.name)}</span>${it.reviewed ? "" : `<span class="tag rev">확인 전</span>`}</div>${it.level || it.cycle ? `<div style="margin-top:3px">${lvTag(it)}</div>` : ""}
+      <div class="row"><span class="it-name grow">${esc(it.name)}</span>${it.reviewed ? "" : `<span class="tag rev">확인 전</span>`}</div>${it.level || it.cycle || it.when ? `<div style="margin-top:3px">${lvTag(it)}${it.when && it.when !== it.cycle ? ` <span class="tag cau">🔧 ${esc(it.when)}</span>` : ""}</div>` : ""}
       <div class="crit">${esc(stdText(it))}${it.condition ? `<div class="muted" style="margin-top:2px">조건: ${esc(it.condition)}</div>` : ""}</div>
       ${it.method === "contact" ? `<div class="ckrow"><span class="grow muted">리드선 저항 (선택, 빼고 판정)</span><input class="t msin" inputmode="decimal" data-lead="${esc(it.id)}" value="${esc(d.lead[it.id] ?? "")}" placeholder="0" autocomplete="off"><span class="muted msu">${esc(it.unit || "Ω")}</span></div>` : ""}
       ${ckRows(it).map(r => { const i = n++; const inp = d.inp[r.k] || {}; const x = res.get(r.k);
@@ -470,7 +480,7 @@ function renderMeasSheet(){
   $("#msCar").onchange = keep;
   $("#msDate").onchange = e => { d.date = e.target.value; msSave(g, d); };
   m.querySelectorAll("[data-msf]").forEach(b => b.onclick = () => { S.msFilter = b.dataset.msf; renderMeasSheet(); });
-  bindPw(m, renderMeasSheet); bindLv(m, renderMeasSheet);
+  bindPw(m, renderMeasSheet); bindLv(m, renderMeasSheet); bindW(m, renderMeasSheet);
   m.querySelectorAll("[data-msm]").forEach(el => el.oninput = () => { d.memo[el.dataset.msm] = el.value; msSave(g, d); });
   m.querySelectorAll("[data-msinfo]").forEach(b => b.onclick = () => ckInfo(itemById(b.dataset.msinfo)));
   $("#msClear").onclick = () => { const dn = rows.filter(r => ev(r)).length; if (dn && !confirm("이 장치에 넣은 값을 모두 비울까요?")) return; d.inp = {}; d.memo = {}; msSave(g, d); renderMeasSheet(); };
@@ -597,23 +607,23 @@ const serRec = r => r;
 
 /* ===== 점검표 탭 (합격/불합격 항목을 장치별로) ===== */
 const pnum = it => { const m = String(it.source?.page || "").match(/P\s*(\d+)/); return m ? +m[1] : 9999; };
-const ckItems = g => S.items.filter(i => isCheck(i) && lvOk(i) && (i.group || "기타") === g).sort((a, b) => pnum(a) - pnum(b) || a.name.localeCompare(b.name, "ko"));
+const ckItems = g => S.items.filter(i => isCheck(i) && vis(i) && (i.group || "기타") === g).sort((a, b) => pnum(a) - pnum(b) || a.name.localeCompare(b.name, "ko"));
 const ckRows = it => (it.points && it.points.length ? it.points : [""]).map(p => ({it, p, k: it.id + "|" + p}));
 function ckDraft(g){ const all = ls.get("ck-draft", {}); const d = all[g] || {}; return {car: d.car ?? ls.get("meas-car", ""), date: d.date || today(), ans: d.ans || {}, memo: d.memo || {}}; }
 function ckSave(g, d){ const all = ls.get("ck-draft", {}); all[g] = d; ls.set("ck-draft", all); }
 function renderCheck(){
   const m = $("#main");
-  const gs = [...new Set(S.items.filter(i => isCheck(i) && lvOk(i)).map(i => i.group || "기타"))].sort((a, b) => a.localeCompare(b, "ko"));
-  if (!gs.length && S.lvF && S.items.some(isCheck)){ S.lvF = ""; ls.set("lvF", ""); return renderCheck(); }
+  const gs = [...new Set(S.items.filter(i => isCheck(i) && vis(i)).map(i => i.group || "기타"))].sort((a, b) => a.localeCompare(b, "ko"));
+  if (!gs.length && (S.lvF || S.wF !== "base") && S.items.some(isCheck)){ S.lvF = ""; ls.set("lvF", ""); S.wF = "base"; ls.set("wF", "base"); return renderCheck(); }
   if (!gs.length){ m.innerHTML = `<div class="empty">합격/불합격 항목이 아직 없어요.<br><br><b>기준값</b> 탭에서 기준값 파일을 불러오면<br>장치별 점검표가 생겨요.</div>`; return; }
   if (S.ckGroup && gs.includes(S.ckGroup)) return renderCheckForm();
   const drafts = ls.get("ck-draft", {});
-  m.innerHTML = lvChips(S.items.filter(isCheck)) + `<div class="muted" style="margin:8px 0">장치를 고르면 숫자 없는 점검 항목이 체크리스트로 나와요. 고른 것은 저장 전까지 이 기기에 임시로 남아 있어요.</div>` + gs.map(g => {
+  m.innerHTML = lvChips(S.items.filter(isCheck)) + wChips(S.items.filter(isCheck)) + `<div class="muted" style="margin:8px 0">장치를 고르면 숫자 없는 점검 항목이 체크리스트로 나와요. 고른 것은 저장 전까지 이 기기에 임시로 남아 있어요.</div>` + gs.map(g => {
     const rows = ckItems(g).flatMap(ckRows); const d = drafts[g]; const done = d && d.ans ? rows.filter(r => d.ans[r.k]).length : 0;
     const last = S.records.filter(r => r.kind === "check" && (r.group || "기타") === g).map(r => r.date).sort().at(-1);
     return `<div class="card click" data-ckg="${esc(g)}"><div class="row"><span class="it-name grow">${esc(g)}</span><span class="muted">${ckItems(g).length}개 항목</span></div>
       <div class="std">${done ? `작성 중 ${done} / ${rows.length}` : `점검 칸 ${rows.length}개`}${pwCount(ckItems(g))}${last ? ` · 마지막 저장 ${esc(last)}` : ""}</div></div>`; }).join("");
-  bindLv(m, renderCheck);
+  bindLv(m, renderCheck); bindW(m, renderCheck);
   m.querySelectorAll("[data-ckg]").forEach(b => b.onclick = () => { S.ckGroup = b.dataset.ckg; S.ckFilter = ""; renderCheck(); window.scrollTo(0, 0); });
 }
 function renderCheckForm(){
@@ -629,9 +639,9 @@ function renderCheckForm(){
       <div><label class="f">점검 날짜</label><input class="t" type="date" id="ckDate" value="${esc(d.date)}"></div></div>
     <div class="card" style="margin-top:10px"><div class="row"><b class="grow">진행 ${nDone} / ${rows.length}</b>${nFail ? `<span class="tag bad">불합격 ${nFail}</span>` : ""}</div>
       <div class="bar"><i style="width:${rows.length ? nDone / rows.length * 100 : 0}%"></i></div></div>
-    <div class="chips"><button class="chip ${!f ? "on" : ""}" data-ckf="">전체 ${items.length}</button><button class="chip ${f === "left" ? "on" : ""}" data-ckf="left">남은 것 ${rows.length - nDone}</button><button class="chip ${f === "fail" ? "on" : ""}" data-ckf="fail">불합격 ${nFail}</button></div>${lvChips(S.items.filter(i => isCheck(i) && (i.group || "기타") === g))}${pwChips(items)}
+    <div class="chips"><button class="chip ${!f ? "on" : ""}" data-ckf="">전체 ${items.length}</button><button class="chip ${f === "left" ? "on" : ""}" data-ckf="left">남은 것 ${rows.length - nDone}</button><button class="chip ${f === "fail" ? "on" : ""}" data-ckf="fail">불합격 ${nFail}</button></div>${lvChips(S.items.filter(i => isCheck(i) && (i.group || "기타") === g))}${wChips(S.items.filter(i => isCheck(i) && (i.group || "기타") === g))}${pwChips(items)}
     <div style="margin-top:8px">${secs(items.filter(show).filter(pwOk), it => `<div class="card ck">
-      <div class="row"><span class="it-name grow">${esc(it.name)}</span>${it.reviewed ? "" : `<span class="tag rev">확인 전</span>`}</div>${it.level || it.cycle ? `<div style="margin-top:3px">${lvTag(it)}</div>` : ""}
+      <div class="row"><span class="it-name grow">${esc(it.name)}</span>${it.reviewed ? "" : `<span class="tag rev">확인 전</span>`}</div>${it.level || it.cycle || it.when ? `<div style="margin-top:3px">${lvTag(it)}${it.when && it.when !== it.cycle ? ` <span class="tag cau">🔧 ${esc(it.when)}</span>` : ""}</div>` : ""}
       ${critText(it) ? `<div class="crit">${esc(critText(it))}</div>` : ""}
       ${ckRows(it).map(r => `<div class="ckrow">${r.p ? `<span class="grow ckp">${esc(r.p)}</span>` : `<span class="grow"></span>`}${prevTag(it, r.p)}
         <button class="btn pf2 pass ${d.ans[r.k] === "pass" ? "on" : ""}" data-ck="${esc(r.k)}" data-v="pass">✔ 합격</button><button class="btn pf2 fail ${d.ans[r.k] === "fail" ? "on" : ""}" data-ck="${esc(r.k)}" data-v="fail">✖ 불합격</button></div>
@@ -645,7 +655,7 @@ function renderCheckForm(){
   $("#ckCar").onchange = () => keep(() => {});
   $("#ckDate").onchange = e => { d.date = e.target.value; ckSave(g, d); };
   m.querySelectorAll("[data-ckf]").forEach(b => b.onclick = () => { S.ckFilter = b.dataset.ckf; renderCheckForm(); });
-  bindPw(m, renderCheckForm); bindLv(m, renderCheckForm);
+  bindPw(m, renderCheckForm); bindLv(m, renderCheckForm); bindW(m, renderCheckForm);
   m.querySelectorAll("[data-ck]").forEach(b => b.onclick = () => keep(() => { const k = b.dataset.ck; if (d.ans[k] === b.dataset.v) delete d.ans[k]; else d.ans[k] = b.dataset.v; ckSave(g, d); }));
   m.querySelectorAll("[data-ckm]").forEach(el => el.oninput = () => { d.memo[el.dataset.ckm] = el.value; ckSave(g, d); });
   m.querySelectorAll("[data-ckinfo]").forEach(b => b.onclick = () => ckInfo(itemById(b.dataset.ckinfo)));
@@ -668,6 +678,7 @@ function ckInfo(it){
   openModal(`<div class="sheet-head"><h2>${esc(it.name)}</h2><button class="btn sm" data-close>닫기</button></div>
     ${critText(it) ? `<label class="f">판정 기준</label><div class="crit">${esc(critText(it))}</div>` : isCheck(it) ? "" : `<label class="f">판정 기준</label><div class="crit">${esc(stdText(it))}</div>`}
     ${pwOf(it) ? `<div class="std" style="margin-top:6px">${PW[pwOf(it)].ic} ${esc(PW[pwOf(it)].t)}</div>` : ""}
+    ${it.when ? `<div class="std" style="margin-top:6px">🔧 이럴 때만 해요: ${esc(it.when)}</div>` : ""}
     ${it.level || it.cycle ? `<div class="std" style="margin-top:6px">정비 구분: ${esc(it.level || "-")}${it.cycle ? ` · 주기 ${esc(it.cycle)}` : ""}</div>` : ""}
     ${it.condition ? `<div class="std" style="margin-top:6px">조건: ${esc(it.condition)}</div>` : ""}
     ${it.note ? `<div class="hint">${esc(it.note)}</div>` : ""}
@@ -959,6 +970,7 @@ function editItem(it){
       <label class="f">가압 구분</label><select class="t" id="e_pw">${["", "off", "ctl", "hv"].map(k => `<option value="${k}" ${(d.power || "") === k ? "selected" : ""}>${k ? PW[k].ic + " " : ""}${esc(PW[k].t)}</option>`).join("")}</select>
       <div class="grid2"><div><label class="f">정비 구분</label><select class="t" id="e_lv">${["", ...LVS].map(k => `<option value="${k}" ${(d.level || "") === k ? "selected" : ""}>${k || "구분 없음"}</option>`).join("")}</select></div>
         <div><label class="f">주기 (예: LI·GI)</label><input class="t" id="e_cyc" value="${esc(d.cycle || "")}" placeholder="예: LI·GI"></div></div>
+      <label class="f">이럴 때만 측정 (비우면 기본 측정)</label><input class="t" id="e_when" value="${esc(d.when || "")}" placeholder="예: 조립체 탈거 시, 이상 시">
       <label class="f">측정 조건·측정기 (선택)</label><input class="t" id="e_cond" value="${esc(d.condition || "")}" placeholder="예: DC 1000V 메거, 1분값">
       <label class="f">메모 (선택)</label><textarea class="t" id="e_note">${esc(d.note || "")}</textarea>
       <details ${d.source.doc || d.source.quote ? "open" : ""}><summary>출처 (매뉴얼)</summary>
@@ -978,7 +990,7 @@ function editItem(it){
       if ($("#p_criteria")) d.params.criteria = $("#p_criteria").value.trim();
       if ($("#p_inputs")) { d.params.inputs = v("p_inputs"); d.params.expr = v("p_expr"); }
       d.points = v("e_points").split(/[,，]/).map(s => s.trim()).filter(Boolean);
-      d.power = $("#e_pw").value; d.level = $("#e_lv").value; d.cycle = $("#e_cyc").value.trim(); d.condition = v("e_cond"); d.note = $("#e_note").value.trim();
+      d.power = $("#e_pw").value; d.level = $("#e_lv").value; d.cycle = $("#e_cyc").value.trim(); d.when = $("#e_when").value.trim(); d.condition = v("e_cond"); d.note = $("#e_note").value.trim();
       d.where = $("#e_where").value.trim(); d.howto = $("#e_howto").value.split("\n").map(x => x.replace(/^\s*(\d+[.)]|[-•·])\s*/, "").trim()).filter(Boolean);
       d.images = (d.images || []).map((im, i) => ({...im, caption: $("#e_cap" + i) ? $("#e_cap" + i).value.trim() : im.caption}));
       d.source = clean({doc: v("s_doc"), page: v("s_page"), quote: $("#s_quote").value.trim()});
@@ -1033,7 +1045,7 @@ function normItem(x){
     caution: clean({min: has(x.caution?.min) ? +x.caution.min : undefined, max: has(x.caution?.max) ? +x.caution.max : undefined}),
     params: {}, points: Array.isArray(x.points) ? x.points.map(String) : [], condition: String(x.condition || ""), note: String(x.note || ""),
     source: clean({doc: x.source?.doc ? String(x.source.doc) : undefined, page: x.source?.page !== undefined ? String(x.source.page) : undefined, quote: x.source?.quote ? String(x.source.quote) : undefined}),
-    power: ["hv", "ctl", "off"].includes(x.power) ? x.power : "", level: LVS.includes(x.level) ? x.level : "", cycle: String(x.cycle || "").trim(), reviewed: x.reviewed === true, updated: x.updated || new Date().toISOString(),
+    power: ["hv", "ctl", "off"].includes(x.power) ? x.power : "", level: LVS.includes(x.level) ? x.level : "", cycle: String(x.cycle || "").trim(), when: String(x.when || "").trim(), reviewed: x.reviewed === true, updated: x.updated || new Date().toISOString(),
     where: String(x.where || ""), howto: Array.isArray(x.howto) ? x.howto.map(String).filter(Boolean) : (x.howto ? String(x.howto).split("\n").filter(Boolean) : []),
     images: (Array.isArray(x.images) ? x.images : []).map(im => typeof im === "string" ? {src: im} : im).map(im => ({src: imgPool[im.ref] || im.src, caption: String(im.caption || ""), page: im.page !== undefined ? String(im.page) : undefined}))
       .filter(im => typeof im.src === "string" && /^data:image\/(png|jpe?g|webp|gif);base64,/.test(im.src)).map(clean)};
@@ -1060,11 +1072,11 @@ async function importFile(f){
   const inc = arr.map(normItem).filter(i => i.name);
   const refs = Array.isArray(j.refs) ? j.refs.map(normRef).filter(Boolean) : [];
   const add = [], chg = [], same = [], pwu = [];
-  inc.forEach(i => { const o = itemById(i.id); if (!o) add.push(i); else if (sameStd(o, i)){ same.push(i); const mu = {}; ["power", "level", "cycle"].forEach(k => { if (i[k] && i[k] !== (o[k] || "")) mu[k] = i[k]; }); if (Object.keys(mu).length) pwu.push({...o, ...mu}); } else chg.push([o, i]); });
+  inc.forEach(i => { const o = itemById(i.id); if (!o) add.push(i); else if (sameStd(o, i)){ same.push(i); const mu = {}; ["power", "level", "cycle", "when"].forEach(k => { if ((i[k] || "") !== (o[k] || "") && (i[k] || k === "when")) mu[k] = i[k] || ""; }); if (Object.keys(mu).length) pwu.push({...o, ...mu}); } else chg.push([o, i]); });
   openModal(`<div class="sheet-head"><h2>기준값 파일 불러오기</h2><button class="btn sm" data-close>닫기</button></div>
     <div class="muted">${esc(f.name)}${j.title ? " · " + esc(j.title) : ""}${j.created ? " · 만든 날 " + esc(j.created) : ""}</div>
     ${j.notes ? `<div class="quote">${esc(j.notes)}</div>` : ""}
-    <div class="card" style="margin-top:10px">새 항목 <b>${add.length}</b>개 · 값이 바뀐 항목 <b>${chg.length}</b>개 · 그대로 ${same.length}개${pwu.length ? `<br>가압 구분·정비 구분(중정비/경정비/고장수리)·주기만 바뀐 항목 <b>${pwu.length}</b>개 (확인 표시는 그대로)` : ""}${refs.length ? `<br>토크·참고표 <b>${refs.length}</b>개 (계산기 탭 → 조임 토크표)` : ""}</div>
+    <div class="card" style="margin-top:10px">새 항목 <b>${add.length}</b>개 · 값이 바뀐 항목 <b>${chg.length}</b>개 · 그대로 ${same.length}개${pwu.length ? `<br>가압 구분·정비 구분·주기·측정 조건만 바뀐 항목 <b>${pwu.length}</b>개 (확인 표시는 그대로)` : ""}${refs.length ? `<br>토크·참고표 <b>${refs.length}</b>개 (계산기 탭 → 조임 토크표)` : ""}</div>
     ${chg.length ? `<h3>바뀌는 항목</h3>${chg.map(([o, n]) => `<div class="card"><b>${esc(n.name)}</b><div class="std">지금: ${esc(stdText(o))}</div><div class="std">파일: ${esc(stdText(n))}</div></div>`).join("")}
       <label class="row" style="margin-top:6px"><input type="checkbox" id="ovr" checked> 바뀐 항목을 파일 값으로 바꾸기</label>` : ""}
     ${add.length ? `<details><summary>새 항목 목록 보기</summary>${add.map(n => `<div class="std">• ${esc(n.name)} — ${esc(stdText(n))}</div>`).join("")}</details>` : ""}
