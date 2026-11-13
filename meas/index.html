@@ -998,7 +998,7 @@ function editItem(it){
     const drawImgs = () => { $("#e_imgs").innerHTML = (d.images || []).map((im, i) => `<div class="imged"><img src="${esc(im.src)}" alt=""><input class="t" id="e_cap${i}" value="${esc(im.caption || "")}" placeholder="사진 설명"><button class="btn sm danger" data-rmimg="${i}" type="button">빼기</button></div>`).join("") || `<div class="muted">사진 없음</div>`;
       document.querySelectorAll("[data-rmimg]").forEach(b => b.onclick = () => { collect(); d.images.splice(+b.dataset.rmimg, 1); drawImgs(); }); };
     drawImgs();
-    $("#e_addimg").onclick = () => pickImage(async f => { collect(); try { const src = await shrinkImage(f); (d.images = d.images || []).push({src, caption: ""}); drawImgs(); } catch { toast("사진을 읽을 수 없어요"); } });
+    $("#e_addimg").onclick = () => pickImage(async f => { collect(); try { const src = await shrinkImage(f); (d.images = d.images || []).push({src, caption: "", mine: true}); drawImgs(); } catch { toast("사진을 읽을 수 없어요"); } });
     const chk = () => { collect(); const w = checkItem(d); $("#e_chk").innerHTML = w.length ? `<div class="warn">${w.map(esc).join("<br>")}</div>` : ""; };
     document.querySelectorAll(".sheet input, .sheet textarea").forEach(el => el.addEventListener("input", chk)); chk();
     $("#e_method").onchange = e => { collect(); d.method = e.target.value; draw(); };
@@ -1056,7 +1056,7 @@ function normRef(x){
   if (!x || !x.id || !Array.isArray(x.cols) || !Array.isArray(x.rows)) return null;
   return {id: String(x.id), kind: String(x.kind || "ref"), group: String(x.group || "기타"), title: String(x.title || ""), cols: x.cols.map(String), rows: x.rows.filter(Array.isArray).map(r => r.map(c => String(c ?? ""))),
     note: String(x.note || ""), source: {doc: String(x.source?.doc || ""), page: String(x.source?.page || "")},
-    images: (Array.isArray(x.images) ? x.images : []).map(im => ({src: imgPool[im.ref] || im.src, caption: String(im.caption || ""), page: im.page !== undefined ? String(im.page) : ""})).filter(im => typeof im.src === "string" && /^data:image\/(png|jpe?g|webp|gif);base64,/.test(im.src))};
+    images: (Array.isArray(x.images) ? x.images : []).map(im => ({src: imgPool[im.ref] || im.src, caption: String(im.caption || ""), page: im.page !== undefined ? String(im.page) : "", ...(im.mine ? {mine: true} : {doc: true})})).filter(im => typeof im.src === "string" && /^data:image\/(png|jpe?g|webp|gif);base64,/.test(im.src))};
 }
 async function saveRefs(arr, replace){ const m = new Map((replace ? [] : S.refs).map(r => [r.id, r])); arr.forEach(r => m.set(r.id, r)); S.refs = [...m.values()]; await DB.put("meta", {k: "refs", v: S.refs}); }
 const stdKey = a => JSON.stringify([a.name, a.group, a.method, a.unit, a.normal, a.caution, a.params, a.points, a.condition, a.where || "", a.howto || [], (a.images || []).map(im => (im.caption || "") + im.src.length + im.src.slice(-40))]);
@@ -1082,9 +1082,11 @@ async function importFile(f){
     ${add.length ? `<details><summary>새 항목 목록 보기</summary>${add.map(n => `<div class="std">• ${esc(n.name)} — ${esc(stdText(n))}</div>`).join("")}</details>` : ""}
     <div class="hint" style="margin-top:8px">파일에서 들어온 항목은 '확인 전'으로 표시됩니다(파일에 확인함으로 적힌 것 제외). 기록은 건드리지 않아요.</div>
     <div class="row" style="margin-top:14px"><span class="grow"></span><button class="btn primary" id="doImp" ${add.length + chg.length + refs.length + pwu.length ? "" : "disabled"}>불러오기</button></div>`);
+  // 사진 중 사용자가 직접 넣은 것만 남김 (예전 파일 그림은 새 파일 그림으로 바뀜)
+  const isMine = im => im.mine || (!im.doc && !im.page && !/^(그림|장치 사진|장치 형상|기능설명서|매뉴얼|\d+\.\d)/.test(im.caption || ""));
   $("#doImp").onclick = async () => {
     const ovr = $("#ovr") ? $("#ovr").checked : false;
-    const put = add.concat(ovr ? chg.map(([o, n]) => ({...n, images: (n.images || []).concat((o.images || []).filter(im => !(n.images || []).some(x => x.src === im.src))), reviewed: n.reviewed || (o.reviewed && sameStd({...o, images: []}, {...n, images: []}))})) : [], pwu);
+    const put = add.concat(ovr ? chg.map(([o, n]) => ({...n, images: (n.images || []).concat((o.images || []).filter(im => isMine(im) && !(n.images || []).some(x => x.src === im.src))), reviewed: n.reviewed || (o.reviewed && sameStd({...o, images: []}, {...n, images: []}))})) : [], pwu);
     await DB.putMany("items", put); if (refs.length) await saveRefs(refs); await loadAll();
     ls.set("std-meta", {name: f.name, title: j.title || "", date: today()});
     closeModal(); toast(`${put.length - pwu.length}개 항목을 넣었어요${pwu.length ? ` · 구분 정보 ${pwu.length}개` : ""}${refs.length ? ` · 토크·참고표 ${refs.length}개` : ""}`); S.itemGroup = unreviewed() ? "__rev" : ""; render();
